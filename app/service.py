@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import math
 
-from app.models import Deal, DealKind, Leg, SearchParams, SearchResponse, SortBy
+from app.models import (CalendarCell, CalendarResponse, CalendarStats, Deal, DealKind, Leg, SearchParams,
+                        SearchResponse, SortBy)
 from app.providers.base import Provider, ProviderError, ProviderQueryError
 
 STANDARD_KINDS = (DealKind.one_way, DealKind.round_trip)
@@ -293,6 +294,47 @@ class FlightDealsService:
             ref = reference.get(d.destination)
             if ref is not None and (d.kind not in STANDARD_KINDS or d.total_shift):
                 d.savings_vs_exact = round(ref - _effective_price(d), 2)
+
+    async def calendar(self, params: SearchParams) -> CalendarResponse:
+        """Precio más barato por fecha de ida (y de vuelta), para ver qué días salen mejor."""
+        deals, warnings, used = await self.collect(params)
+        best: dict[tuple, Deal] = {}
+        for d in deals:
+            key = (d.departure_date, d.return_date)
+            if key not in best or _effective_price(d) < _effective_price(best[key]):
+                best[key] = d
+        ordered = sorted(best.values(), key=lambda d: (d.departure_date, d.return_date or d.departure_date))
+        prices = sorted(_effective_price(d) for d in ordered)
+        if prices:
+            low_cut, high_cut = prices[(len(prices) - 1) // 3], prices[(2 * (len(prices) - 1)) // 3]
+        cells: list[CalendarCell] = []
+        grid: dict = {}
+        for d in ordered:
+            price = _effective_price(d)
+            level = "low" if price <= low_cut else "high" if price > high_cut else "mid"
+            cells.append(CalendarCell(
+                departure_date=d.departure_date, return_date=d.return_date, nights=d.nights, price=price,
+                price_level=level, destination=d.destination, destination_name=d.destination_name,
+                kind=d.kind, airline=d.airline, stops=d.stops,
+                link=d.link or (d.legs[0].link if d.legs else None),
+            ))
+            dep = d.departure_date.isoformat()
+            if params.is_round_trip:
+                grid.setdefault(dep, {})[d.return_date.isoformat()] = price
+            else:
+                grid[dep] = price
+        return CalendarResponse(
+            query=params.model_dump(mode="json", exclude_none=True),
+            trip="round_trip" if params.is_round_trip else "one_way",
+            currency=params.currency,
+            sources_used=used,
+            warnings=warnings,
+            stats=CalendarStats(cells=len(prices), min=prices[0], max=prices[-1],
+                                avg=round(sum(prices) / len(prices), 2)) if prices else None,
+            cheapest=min(cells, key=lambda c: (c.price, c.departure_date)) if cells else None,
+            cells=cells,
+            grid=grid,
+        )
 
     async def search(self, params: SearchParams) -> SearchResponse:
         deals, warnings, used = await self.collect(params)

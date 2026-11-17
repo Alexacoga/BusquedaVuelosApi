@@ -265,3 +265,38 @@ class SearchResponse(BaseModel):
     sources_used: list[str]
     warnings: list[str] = []
     results: list[Deal]
+
+
+class CalendarCell(BaseModel):
+    """Precio más barato para una fecha de ida (y de vuelta, si es ida y vuelta)."""
+    departure_date: date
+    return_date: date | None = None
+    nights: int | None = None
+    price: float
+    price_level: str  # low | mid | high (tercio de precios en el que cae)
+    destination: str
+    destination_name: str | None = None
+    kind: DealKind | None = None
+    airline: str | None = None
+    stops: int | None = None
+    link: str | None = None
+
+
+class CalendarStats(BaseModel):
+    cells: int
+    min: float
+    max: float
+    avg: float
+
+
+class CalendarResponse(BaseModel):
+    query: dict
+    trip: str                       # one_way | round_trip
+    currency: str
+    sources_used: list[str]
+    warnings: list[str] = []
+    stats: CalendarStats | None = None
+    cheapest: CalendarCell | None = None
+    cells: list[CalendarCell]
+    # Rejilla compacta: {ida: precio} o {ida: {vuelta: precio}}
+    grid: dict[str, float | dict[str, float]]

@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from app.cache import TTLCache
 from app.config import get_settings
-from app.models import MAX_FLEX_DAYS, SearchParams, SearchResponse, SortBy, TripType
+from app.models import MAX_FLEX_DAYS, CalendarResponse, SearchParams, SearchResponse, SortBy, TripType
 from app.providers import SerpApiProvider, TravelpayoutsProvider
 from app.service import FlightDealsService, NoProvidersError
 
@@ -116,15 +116,33 @@ def health(service: Annotated[FlightDealsService, Depends(get_service)]):
     return {"status": "ok", "providers": service.available()}
 
 
-@app.get("/deals", response_model=SearchResponse, response_model_exclude_none=True)
-async def deals(
-    service: Annotated[FlightDealsService, Depends(get_service)],
-    params: Annotated[SearchParams, Depends(search_params)],
-):
+async def _run(coro):
     try:
-        result = await service.search(params)
+        result = await coro
     except NoProvidersError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     if not result.sources_used and result.warnings:
         raise HTTPException(status_code=502, detail=result.warnings)
     return result
+
+
+@app.get("/deals", response_model=SearchResponse, response_model_exclude_none=True)
+async def deals(
+    service: Annotated[FlightDealsService, Depends(get_service)],
+    params: Annotated[SearchParams, Depends(search_params)],
+):
+    """Ofertas ordenadas según `sort`."""
+    return await _run(service.search(params))
+
+
+@app.get("/calendar", response_model=CalendarResponse, response_model_exclude_none=True)
+async def calendar(
+    service: Annotated[FlightDealsService, Depends(get_service)],
+    params: Annotated[SearchParams, Depends(search_params)],
+):
+    """Precio más barato por día de ida (y de vuelta). Acepta los mismos parámetros que /deals;
+    `limit`, `sort` y `group_by_destination` no se usan. Requiere fechas de ida."""
+    if params.depart_window is None:
+        raise HTTPException(status_code=422, detail=[
+            {"field": "depart_from", "error": "/calendar necesita fechas de ida (depart_from y/o depart_to)"}])
+    return await _run(service.calendar(params))

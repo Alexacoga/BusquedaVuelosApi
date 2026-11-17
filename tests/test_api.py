@@ -385,3 +385,30 @@ def test_open_jaw_max_km(rec):
     app.state.service = None
     body = r.json()
     assert body["count"] == 0 and "100 km" in body["warnings"][0]
+
+
+# --- Fase 2: /calendar ------------------------------------------------------------------
+
+def test_calendar_one_way(rec):
+    with tp_client(rec) as c:
+        body = c.get("/calendar", params={"origin": "MAD", "destination": "BCN", "depart_from": D(9),
+                                          "depart_to": D(12), "trip_type": "one_way"}).json()
+    app.state.service = None
+    assert body["trip"] == "one_way" and body["grid"] == {D(10): 35, D(11): 80}
+    assert body["cheapest"]["price"] == 35 and body["stats"] == {"cells": 2, "min": 35, "max": 80, "avg": 57.5}
+    assert [c["price_level"] for c in body["cells"]] == ["low", "high"]
+
+
+def test_calendar_round_trip_grid_cheapest_per_cell(rec):
+    with tp_client(rec) as c:
+        body = c.get("/calendar", params={"origin": "MAD", "depart_from": D(9), "depart_to": D(21),
+                                          "return_from": D(13), "return_to": D(26)}).json()
+    app.state.service = None
+    assert body["trip"] == "round_trip"
+    assert body["grid"][D(10)] == {D(14): 35} and body["grid"][D(12)] == {D(19): 60}
+    assert body["cheapest"]["destination"] == "BCN"
+
+
+def test_calendar_requires_depart_dates(client):
+    r = client.get("/calendar", params={"origin": "MAD"})
+    assert r.status_code == 422 and "fechas de ida" in r.text
