@@ -105,8 +105,52 @@ docker run -p 8000:8000 --env-file .env flight-deals
 | `direct_only` | | `true` = solo sin escalas |
 | `currency` | | `EUR` por defecto |
 | `sources` | | `travelpayouts` y/o `google_flights`. Vacío = todas las configuradas |
-| `group_by_destination` | | `true` = solo la oferta más barata de cada destino |
+| `group_by_destination` | | `true` = solo la mejor oferta de cada destino (según `sort`) |
 | `limit` | | Máx. resultados (1-500, defecto 50) |
+| `sort` | | `price` (defecto), `price_per_night`, `nights_desc`, `closest`, `score`, `duration` |
+
+### Búsqueda ampliada (fechas flexibles y billetes sueltos)
+
+| Parámetro | Descripción |
+|---|---|
+| `flex_days` | Margen ± días en ida y vuelta (0-7) |
+| `depart_flex`, `return_flex` | Margen ± días solo en la ida / solo en la vuelta (tienen prioridad sobre `flex_days`) |
+| `max_shift_total` | Máx. días movidos sumando ida y vuelta |
+| `shift_penalty` | € por día movido; con `sort=score` ordena por `precio + penalización` |
+| `split_tickets` | `true` = compara también con **dos billetes de solo ida** (a menudo más barato con low-cost) |
+| `open_jaw` | `true` = **volver desde otra ciudad** cercana al destino (solo devuelve combinaciones open-jaw) |
+| `return_origin` | IATA de la ciudad desde la que volver (implica open-jaw) |
+| `open_jaw_max_km` | Con `open_jaw` sin ciudad: distancia máx. entre destino y ciudad de vuelta (defecto 600) |
+| `max_candidates` | Destinos / ciudades a combinar como máximo (1-15, defecto 8) |
+
+Campos extra en cada resultado: `kind` (`one_way`, `round_trip`, `split`, `open_jaw`, `self_transfer`),
+`depart_shift` / `return_shift` (días respecto a lo pedido, negativo = antes), `savings_vs_exact`
+(ahorro frente a la mejor opción con las fechas exactas) y `legs` (cada billete con su propio enlace).
+
+### Búsqueda ampliada avanzada (`mode=advanced`): dos vuelos enlazados por tu cuenta
+
+Para un tramo de **solo ida** A→B (requiere `destination` y fechas de ida), busca además combinaciones
+**A→X + X→B** con dos billetes independientes, aunque la espera sea de horas o días.
+Ejemplo: Estocolmo → París → Barcelona más barato que el directo.
+
+| Parámetro | Defecto | Descripción |
+|---|---|---|
+| `max_layover_days` | 1 | Noches máximas en la ciudad intermedia (0 = mismo día, máx. 3) |
+| `min_connection_hours` | 3 | Margen mínimo entre la llegada del 1.er vuelo y la salida del 2.º |
+| `allow_airport_change` | true | Permitir llegar y salir por aeropuertos distintos (p. ej. BVA → ORY) |
+| `stopover_cost_per_night` | 0 | Coste estimado de alojamiento por noche; se suma en `estimated_total` y se usa para ordenar |
+| `max_candidates` | 8 | Ciudades intermedias a probar (máx. 15) |
+
+Campos extra: `layover_city`, `layover_hours`, `airport_change`, `stopover_type`
+(`connection` mismo día · `overnight` pasas una noche · `stopover` 24 h o más), `estimated_total`, `notes`.
+
+> ⚠️ **Riesgos de enlazar vuelos por tu cuenta** (la API lo avisa en `warnings`): si el primer vuelo se
+> retrasa y pierdes el segundo no hay protección ni compensación; hay que recoger y volver a facturar el
+> equipaje; revisa visados / Schengen en la ciudad intermedia; y confirma el precio de **ambos** tramos.
+
+### Enlaces de reserva
+Cada resultado (o cada tramo en `legs`) trae un enlace de Aviasales con ese vuelo ya cargado: al abrirlo,
+Aviasales repite la búsqueda en tiempo real y muestra las agencias / aerolínea con su precio para reservar.
 
 ### Ejemplos
 
@@ -119,7 +163,37 @@ curl "localhost:8000/deals?origin=MAD&depart_from=2026-12-01&depart_to=2026-12-3
 
 # Escapada: 2-4 noches, solo directos
 curl "localhost:8000/deals?origin=BCN&depart_from=2027-01-08&depart_to=2027-01-30&min_nights=2&max_nights=4&direct_only=true"
+
+# Fechas 20→29 de marzo con ±2 días, más días de viaje por euro, comparando billetes sueltos
+curl "localhost:8000/deals?origin=BCN&depart_from=2027-03-20&return_from=2027-03-29&flex_days=2&split_tickets=true&sort=price_per_night&group_by_destination=true"
+
+# Ida a Lisboa y vuelta desde Oporto
+curl "localhost:8000/deals?origin=BCN&destination=LIS&depart_from=2027-03-20&return_from=2027-03-29&flex_days=2&return_origin=OPO"
+
+# Estocolmo → Barcelona enlazando dos vuelos, hasta 2 noches en la ciudad intermedia (40 €/noche)
+curl "localhost:8000/deals?origin=STO&destination=BCN&depart_from=2027-03-27&depart_to=2027-03-31&mode=advanced&max_layover_days=2&stopover_cost_per_night=40"
 ```
+
+## 4.b `GET /calendar`: precio más barato por día
+
+Acepta **los mismos parámetros** que `/deals` (incluidos `flex_days`, `split_tickets`, `open_jaw`…) y
+requiere fechas de ida. Devuelve la mejor oferta de cada fecha de ida (y de vuelta):
+
+```bash
+curl "localhost:8000/calendar?origin=BCN&destination=LIS&depart_from=2027-03-18&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-31"
+```
+
+```json
+{
+  "trip": "round_trip", "currency": "EUR",
+  "stats": { "cells": 3, "min": 95.0, "max": 116.0, "avg": 103.33 },
+  "cheapest": { "departure_date": "2027-03-22", "return_date": "2027-03-27", "price": 95.0, "...": "..." },
+  "cells": [ { "departure_date": "2027-03-20", "return_date": "2027-03-27", "price": 99.0, "price_level": "mid", "...": "..." } ],
+  "grid": { "2027-03-20": { "2027-03-27": 99.0 }, "2027-03-22": { "2027-03-27": 95.0, "2027-03-28": 116.0 } }
+}
+```
+
+`price_level` (`low` / `mid` / `high`) indica en qué tercio de precios cae cada celda, para pintarlo como mapa de calor.
 
 > Consejo: con fechas exactas suele haber pocos resultados (los datos son de búsquedas de otros
 > usuarios). Deja ±2-3 días de margen para ver muchos más destinos.
@@ -154,28 +228,43 @@ curl "localhost:8000/deals?origin=BCN&depart_from=2027-01-08&depart_to=2027-01-3
 ## 5. Cómo funciona por dentro
 
 ```
-GET /deals
-  └─ main.py        valida parámetros (models.SearchParams) → 422 si algo está mal
-      └─ service.py  lanza en paralelo todos los proveedores activos
-          ├─ providers/travelpayouts.py  1 llamada por combinación mes-ida × mes-vuelta (máx. 12)
-          └─ providers/serpapi.py        1 llamada por mes de ida (máx. 6 meses)
-              └─ providers/base.py       GET con caché, 1 reintento ante 429/5xx/red,
-                                         clasifica errores (consulta rechazada vs fallo real)
-      ← service.py   unifica, deduplica, filtra (fechas, precio, noches, escalas),
-                     agrupa por destino si se pide y ordena por precio
+GET /deals  ·  GET /calendar
+  └─ main.py        search_params() valida (models.SearchParams) → 422 si algo está mal
+      └─ service.collect()  lanza en paralelo:
+          ├─ búsqueda normal en cada proveedor activo (fechas ± flex)
+          ├─ split_tickets / open_jaw → _split_tickets()   (solo travelpayouts)
+          └─ mode=advanced            → _self_transfer()   (solo travelpayouts)
+              └─ providers/base.py   GET con caché, 1 reintento ante 429/5xx/red, máx. 6 llamadas
+                                     simultáneas, clasifica errores (consulta rechazada vs fallo real)
+      ← service.py   deduplica, filtra, calcula desplazamientos y ahorro,
+                     /deals: agrupa y ordena según sort · /calendar: mejor precio por fecha
 ```
+
+### Llamadas a Travelpayouts por modo (todas cacheadas `CACHE_TTL_SECONDS`)
+
+| Modo | Llamadas |
+|---|---|
+| Normal | 1 por combinación mes-ida × mes-vuelta (máx. 12) + `cities.json` (una vez) |
+| `split_tickets` con destino | + 1-2 por mes (ida y vuelta, en paralelo) |
+| `split_tickets` a cualquier destino | + 1 para descubrir destinos + 2 por destino candidato (`max_candidates`) |
+| `open_jaw` sin ciudad | + 2 de red de rutas (sin fechas) + 1 por ciudad de vuelta cercana |
+| `mode=advanced` | + 2 de red de rutas (sin fechas) + 2 por ciudad intermedia (`max_candidates`) |
+
+> Travelpayouts, si se deja vacío el origen o el destino, devuelve solo **la opción más barata de cada
+> día**. Por eso los modos combinados descubren primero las ciudades con la **red de rutas** (consulta sin
+> fechas, que devuelve cientos de vuelos de los próximos meses) y después piden cada ruta concreta.
 
 | Archivo | Responsabilidad |
 |---|---|
-| `app/main.py` | Endpoints `/health` y `/deals`, ciclo de vida del cliente HTTP, mapeo de errores a códigos HTTP |
-| `app/models.py` | `SearchParams` (parámetros y validación), `Deal` (oferta), `SearchResponse`, ventanas de fechas |
-| `app/service.py` | Orquesta proveedores; errores de un proveedor se convierten en `warnings` sin tumbar la respuesta |
+| `app/main.py` | Endpoints `/health`, `/deals` y `/calendar`; parámetros comunes; mapeo de errores a códigos HTTP |
+| `app/models.py` | `SearchParams` (parámetros y validación), `Deal`, `Leg` (tramo), `SearchResponse`, `CalendarResponse`, ventanas de fechas con flexibilidad |
+| `app/service.py` | Orquesta proveedores, combina billetes (split, open-jaw, self-transfer), filtra, anota ahorro y ordena; los errores de un proveedor se convierten en `warnings` |
 | `app/cache.py` | Caché en memoria con caducidad (TTL) y tamaño máximo. **Se pierde al reiniciar** |
 | `app/config.py` | Lee `.env` / variables de entorno sin dependencias externas |
 | `app/providers/base.py` | Clase base `Provider`, GET con caché y reintento, `ProviderError` / `ProviderQueryError` |
-| `app/providers/travelpayouts.py` | Construye consultas a Aviasales v3, traduce resultados a `Deal`, añade nombres de ciudad |
+| `app/providers/travelpayouts.py` | Consultas a Aviasales v3, `one_way_legs()` (billetes de solo ida con hora de llegada y aeropuertos), nombres y coordenadas de ciudades, `distance_km()` |
 | `app/providers/serpapi.py` | Construye consultas a Google Travel Explore (opcional) |
-| `tests/test_api.py` | 17 tests con respuestas simuladas: no usan red ni claves |
+| `tests/test_api.py` | 30 tests con respuestas simuladas: no usan red ni claves |
 
 ### Tipos de error de proveedor
 - `ProviderQueryError` (HTTP 400): el proveedor funciona pero no acepta la consulta (p. ej. IATA
@@ -189,12 +278,16 @@ pytest -q
 ```
 
 Cubren búsqueda con rangos, filtros de precio/escalas/noches, agrupación por destino, validaciones,
-caché, fallo de un proveedor, consulta rechazada, token en cabecera y reintento ante errores
-transitorios.
+caché, fallo de un proveedor, consulta rechazada, token en cabecera, reintento ante errores
+transitorios, fechas flexibles y ordenación, billetes sueltos, open-jaw (con ciudad y por distancia),
+`/calendar` y el modo avanzado (conexión mínima, noches en la escala, cambio de aeropuerto y coste
+de alojamiento).
 
 ## 7. Limitaciones conocidas y próximos pasos
 - Los precios de Travelpayouts son de búsquedas recientes de otros usuarios, no en tiempo real.
 - La caché es solo en memoria: no hay histórico de precios.
+- Los modos combinados dependen de que haya datos de cada tramo; rutas poco buscadas pueden no salir.
+- `mode=advanced` cubre un tramo de solo ida; para ida y vuelta, haz una búsqueda por tramo.
 - **Siguiente objetivo**: alertas de precio (consulta diaria + histórico persistente + aviso cuando
   un destino baje de un umbral).
 - Para añadir otra fuente, crea una clase que herede de `Provider` en `app/providers/` y añádela en

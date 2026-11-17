@@ -291,45 +291,50 @@ class FlightDealsService:
             broad = await self._legs_many(prov, {(p.origin, None)}, dsw, p, warnings)
             dests = _cheapest_cities(broad[(p.origin, None)], "destination", exclude, p.max_candidates)
 
-        # 2) Billetes concretos de ida (en paralelo)
-        outbound_res = await self._legs_many(prov, {(p.origin, d) for d in dests}, dsw, p, warnings)
-        outbound = {d: outbound_res[(p.origin, d)] for d in dests}
+        out_routes = {(p.origin, d) for d in dests}
+        if not p.open_jaw or p.return_origin:
+            # Ciudades de vuelta conocidas de antemano: ida y vuelta se piden a la vez
+            return_cities = {d: [p.return_origin or d] for d in dests}
+            in_routes = {(c, p.origin) for cities in return_cities.values() for c in cities}
+            out_res, in_res = await asyncio.gather(self._legs_many(prov, out_routes, dsw, p, warnings),
+                                                   self._legs_many(prov, in_routes, rsw, p, warnings))
+            outbound = {d: out_res[(p.origin, d)] for d in dests}
+            inbound = {c: in_res[(c, p.origin)] for c, _ in in_routes}
+            return combine_round_trip(p, outbound, inbound, return_cities), warnings
 
-        # 3) Ciudades desde las que se vuelve
-        if p.return_origin:
-            return_cities = {d: [p.return_origin] for d in dests}
-        elif p.open_jaw:
-            # Ciudades cercanas al destino conectadas con el origen. Se descubren con la red de rutas
-            # (cualquiera→origen y origen→cualquiera, sin fechas): con fechas solo devuelve la opción
-            # más barata de cada día y salen muy pocas ciudades.
-            wide = await self._legs_many(prov, {(None, p.origin), (p.origin, None)}, None, p, warnings)
-            country_of: dict[str, str | None] = {}
-            price_of: dict[str, float] = {}
-            for leg in wide[(None, p.origin)]:
-                country_of[leg.origin] = leg.origin_country
-                price_of[leg.origin] = min(price_of.get(leg.origin, math.inf), leg.price)
-            for leg in wide[(p.origin, None)]:
-                country_of.setdefault(leg.destination, leg.destination_country)
-                price_of.setdefault(leg.destination, leg.price)
-            ranked = [c for c in sorted(price_of, key=price_of.get) if c not in exclude]
-            return_cities = {}
-            for d in dests:
-                near = []
-                for c in ranked:
-                    if c == d:
-                        continue
-                    km = await prov.distance_km(d, c) if hasattr(prov, "distance_km") else None
-                    # Sin coordenadas, se acepta solo si es del mismo país
-                    ok = km <= p.open_jaw_max_km if km is not None else (
-                        country_of.get(c) is not None and country_of.get(c) == country_of.get(d))
-                    if ok:
-                        near.append(c)
-                return_cities[d] = near[: p.max_candidates]
-            if not any(return_cities.values()):
-                warnings.append(f"open_jaw: no hay vueltas con datos desde ciudades a menos de "
-                                f"{p.open_jaw_max_km} km del destino; prueba con return_origin u open_jaw_max_km")
-        else:
-            return_cities = {d: [d] for d in dests}
+        # 2) open_jaw sin ciudad: ida concreta y descubrimiento de ciudades de vuelta a la vez
+        outbound_res, wide = await asyncio.gather(
+            self._legs_many(prov, out_routes, dsw, p, warnings),
+            self._legs_many(prov, {(None, p.origin), (p.origin, None)}, None, p, warnings))
+        outbound = {d: outbound_res[(p.origin, d)] for d in dests}
+        # 3) Ciudades cercanas al destino conectadas con el origen. Se descubren con la red de rutas
+        #    (cualquiera→origen y origen→cualquiera, sin fechas): con fechas solo devuelve la opción
+        #    más barata de cada día y salen muy pocas ciudades.
+        country_of: dict[str, str | None] = {}
+        price_of: dict[str, float] = {}
+        for leg in wide[(None, p.origin)]:
+            country_of[leg.origin] = leg.origin_country
+            price_of[leg.origin] = min(price_of.get(leg.origin, math.inf), leg.price)
+        for leg in wide[(p.origin, None)]:
+            country_of.setdefault(leg.destination, leg.destination_country)
+            price_of.setdefault(leg.destination, leg.price)
+        ranked = [c for c in sorted(price_of, key=price_of.get) if c not in exclude]
+        return_cities = {}
+        for d in dests:
+            near = []
+            for c in ranked:
+                if c == d:
+                    continue
+                km = await prov.distance_km(d, c) if hasattr(prov, "distance_km") else None
+                # Sin coordenadas, se acepta solo si es del mismo país
+                ok = km <= p.open_jaw_max_km if km is not None else (
+                    country_of.get(c) is not None and country_of.get(c) == country_of.get(d))
+                if ok:
+                    near.append(c)
+            return_cities[d] = near[: p.max_candidates]
+        if not any(return_cities.values()):
+            warnings.append(f"open_jaw: no hay vueltas con datos desde ciudades a menos de "
+                            f"{p.open_jaw_max_km} km del destino; prueba con return_origin u open_jaw_max_km")
 
         # 4) Billetes concretos de vuelta (en paralelo) y combinación
         in_routes = {(c, p.origin) for cities in return_cities.values() for c in cities}
