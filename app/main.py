@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Flight Deals API",
-    version="1.1.0",
+    version="1.2.0",
     description="Busca ofertas de vuelos desde un origen a cualquier destino, con rangos de fechas y precio.",
     lifespan=lifespan,
 )
@@ -95,7 +95,8 @@ def search_params(
                                           description="open_jaw sin ciudad: distancia máx. entre destino y vuelta")] = 600,
     max_candidates: Annotated[int, Query(ge=1, le=15, description="Destinos/ciudades a combinar como máximo")] = 8,
     # Modo avanzado
-    mode: Annotated[SearchMode, Query(description="standard | advanced (enlaza dos vuelos A→X→B)")] = SearchMode.standard,
+    mode: Annotated[SearchMode, Query(description="standard | advanced (enlaza dos vuelos A→X→B; con fechas "
+                                                  "de vuelta, también en la vuelta)")] = SearchMode.standard,
     max_layover_days: Annotated[int, Query(ge=0, le=MAX_LAYOVER_DAYS,
                                            description="advanced: noches máx. en la ciudad intermedia")] = 1,
     min_connection_hours: Annotated[float, Query(ge=1, le=24, description="advanced: margen mínimo entre vuelos")] = 3,
@@ -103,6 +104,10 @@ def search_params(
                                                             "distintos de la misma ciudad")] = True,
     stopover_cost_per_night: Annotated[float, Query(ge=0, description="advanced: coste estimado por noche "
                                                                        "en la ciudad intermedia")] = 0,
+    # Alternativas
+    suggest_alternatives: Annotated[bool, Query(description="Si no hay resultados, proponer fechas (±7 días) y "
+                                                            "ciudades cercanas en `alternatives`")] = True,
+    nearby_km: Annotated[int, Query(ge=50, le=1500, description="Distancia máx. de las ciudades alternativas")] = 400,
 ) -> SearchParams:
     try:
         return SearchParams(
@@ -119,6 +124,7 @@ def search_params(
             open_jaw_max_km=open_jaw_max_km, max_candidates=max_candidates,
             mode=mode, max_layover_days=max_layover_days, min_connection_hours=min_connection_hours,
             allow_airport_change=allow_airport_change, stopover_cost_per_night=stopover_cost_per_night,
+            suggest_alternatives=suggest_alternatives, nearby_km=nearby_km,
         )
     except ValidationError as exc:
         raise _validation_error(exc)

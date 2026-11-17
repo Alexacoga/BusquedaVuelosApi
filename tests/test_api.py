@@ -424,6 +424,10 @@ ADV_LEGS = [
     ("MIL", "BCN", 20, 15, 30, 95, 0, "BGY", "BCN"),     # 6 h, cambio de aeropuerto
     ("STO", "BER", 20, 8, 20, 120, 0, "ARN", "BER"),     # llega 10:00
     ("BER", "BCN", 22, 9, 25, 150, 0, "BER", "BCN"),     # 2 noches en Berlín
+    # Vuelta (ida y vuelta en modo avanzado)
+    ("BCN", "STO", 25, 18, 280, 240, 0, "BCN", "ARN"),   # vuelta directa cara
+    ("BCN", "BER", 25, 7, 15, 150, 0, "BCN", "BER"),     # llega 09:30
+    ("BER", "STO", 25, 14, 20, 120, 0, "BER", "ARN"),    # 4,5 h de margen
 ]
 
 
@@ -478,4 +482,41 @@ def test_advanced_no_airport_change_and_validation(rec, client):
     app.state.service = None
     assert all(d["kind"] != "self_transfer" for d in res)
     assert client.get("/deals", params={"origin": "STO", "depart_from": D(20), "mode": "advanced"}).status_code == 422
-    assert client.get("/deals", params=ADV | {"return_from": D(25)}).status_code == 422
+    assert client.get("/deals", params=ADV | {"min_nights": 2}).status_code == 422   # ida y vuelta sin fechas
+
+
+def test_advanced_round_trip(rec):
+    with tp_client(adv_handler(rec)) as c:
+        body = c.get("/deals", params=ADV | {"return_from": D(25)}).json()
+    app.state.service = None
+    res = body["results"]
+    best = res[0]
+    assert best["kind"] == "self_transfer" and best["price"] == 105 and best["nights"] == 5
+    assert (best["layover_city"], best["return_layover_city"]) == ("MIL", "BER")
+    assert [leg["origin"] for leg in best["legs"]] == ["STO", "MIL", "BCN", "BER"]
+    assert any(n.startswith("Vuelta: Conexión por tu cuenta en BER") for n in best["notes"])
+    # conexión propia en un sentido y vuelo directo en el otro
+    assert {d["price"] for d in res} >= {105, 350, 335}
+
+
+# --- Mitigación: alternativas cuando no hay datos ---------------------------------------
+
+def test_alternatives_nearby_destination(rec):
+    q = {"origin": "MAD", "destination": "OPO", "depart_from": D(12), "trip_type": "one_way"}
+    with tp_client(legs_handler(rec)) as c:
+        body = c.get("/deals", params=q).json()
+        off = c.get("/deals", params=q | {"suggest_alternatives": False}).json()
+    app.state.service = None
+    assert body["count"] == 0 and "alternativas" in body["warnings"][-1]
+    alt = body["alternatives"][0]
+    assert alt["destination"] == "LIS" and alt["price"] == 20 and alt["alternative"].startswith("destino cercano: LIS")
+    assert not any(a["destination"] == "ROM" for a in body["alternatives"])   # Roma está a > 400 km
+    assert off["alternatives"] == []
+
+
+def test_alternatives_nearby_dates(client):
+    body = client.get("/deals", params={"origin": "MAD", "destination": "BCN", "depart_from": D(9),
+                                        "trip_type": "one_way", "sources": "travelpayouts"}).json()
+    assert body["count"] == 0
+    alt = body["alternatives"][0]
+    assert alt["price"] == 35 and alt["depart_shift"] == 1 and alt["alternative"].startswith("fechas cercanas")

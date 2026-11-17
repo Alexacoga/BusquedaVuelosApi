@@ -130,6 +130,9 @@ class SearchParams(BaseModel):
     min_connection_hours: float = Field(3, ge=1, le=24)
     allow_airport_change: bool = True
     stopover_cost_per_night: float = Field(0, ge=0)
+    # --- Alternativas cuando no hay resultados -----------------------------
+    suggest_alternatives: bool = True
+    nearby_km: int = Field(400, ge=50, le=1500)
 
     @field_validator("origin", "destination", "return_origin")
     @classmethod
@@ -172,11 +175,10 @@ class SearchParams(BaseModel):
         if self.mode == SearchMode.advanced:
             if not self.destination:
                 raise ValueError("mode=advanced necesita destination (el tramo A→B que quieres abaratar)")
-            if self.is_round_trip:
-                raise ValueError("mode=advanced es para un tramo de solo ida; para ida y vuelta "
-                                 "haz una búsqueda por cada tramo")
             if self.depart_window is None:
                 raise ValueError("mode=advanced necesita fechas de ida (depart_from y/o depart_to)")
+            if self.is_round_trip and self.return_window is None:
+                raise ValueError("mode=advanced en ida y vuelta necesita fechas de vuelta (return_from y/o return_to)")
         return self
 
     # --- Derivados -------------------------------------------------------
@@ -270,10 +272,14 @@ class Deal(BaseModel):
     legs: list[Leg] | None = None
     layover_hours: float | None = None
     layover_city: str | None = None
+    return_layover_city: str | None = None     # modo avanzado ida y vuelta: conexión propia en la vuelta
+    return_layover_hours: float | None = None
     airport_change: bool | None = None
     stopover_type: str | None = None
     estimated_total: float | None = None
     notes: list[str] | None = None
+    # Solo en `alternatives`: por qué se propone (fechas cercanas, destino u origen cercano)
+    alternative: str | None = None
 
     @property
     def total_shift(self) -> int:
@@ -286,6 +292,8 @@ class SearchResponse(BaseModel):
     sources_used: list[str]
     warnings: list[str] = []
     results: list[Deal]
+    # Solo si `results` está vacío y suggest_alternatives=true: fechas o ciudades cercanas con datos
+    alternatives: list[Deal] = []
 
 
 class CalendarCell(BaseModel):

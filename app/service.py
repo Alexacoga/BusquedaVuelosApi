@@ -4,11 +4,12 @@ from __future__ import annotations
 import asyncio
 import math
 
-from app.models import (CalendarCell, CalendarResponse, CalendarStats, Deal, DealKind, Leg, SearchMode,
-                        SearchParams, SearchResponse, SortBy)
+from app.models import (MAX_FLEX_DAYS, CalendarCell, CalendarResponse, CalendarStats, Deal, DealKind, Leg,
+                        SearchMode, SearchParams, SearchResponse, SortBy, TripType)
 from app.providers.base import Provider, ProviderError, ProviderQueryError
 
 STANDARD_KINDS = (DealKind.one_way, DealKind.round_trip)
+NEARBY_FLEX = 3   # margen ± días mínimo al proponer ciudades cercanas
 
 
 class NoProvidersError(Exception):
@@ -52,7 +53,7 @@ def matches(deal: Deal, p: SearchParams) -> bool:
     stops, return_stops = deal.stops, deal.return_stops
     if deal.kind == DealKind.self_transfer and deal.legs:
         # la conexión propia no cuenta como escala: direct_only exige que cada tramo sea directo
-        stops, return_stops = deal.legs[0].stops, deal.legs[1].stops
+        stops, return_stops = max((leg.stops or 0) for leg in deal.legs), None
     return _in_ranges(p, deal.departure_date, deal.return_date, deal.nights, deal.price, stops, return_stops)
 
 
@@ -227,6 +228,80 @@ def combine_self_transfer(p: SearchParams, first: dict[str, list[Leg]], second: 
     return deals
 
 
+def leg_as_deal(leg: Leg) -> Deal:
+    """Un billete de solo ida suelto, para combinarlo con una opción self_transfer."""
+    return Deal(source=leg.source, kind=DealKind.one_way, origin=leg.origin, destination=leg.destination,
+                destination_name=leg.destination_name, destination_country=leg.destination_country,
+                departure_date=leg.departure_date, price=leg.price, currency=leg.currency, airline=leg.airline,
+                flight_number=leg.flight_number, stops=leg.stops, duration_minutes=leg.duration_minutes,
+                link=leg.link, legs=[leg])
+
+
+ADVANCED_ROUND_TRIP_TOP = 30   # opciones más baratas por sentido que se cruzan entre sí
+
+
+def combine_advanced_round_trip(p: SearchParams, outs: list[Deal], ins: list[Deal]) -> list[Deal]:
+    """Cruza opciones de ida y de vuelta (directas o self_transfer); al menos una debe ser self_transfer
+    (las que no lo son ya las cubren la búsqueda normal y split_tickets)."""
+    outs = sorted(outs, key=_effective_price)[:ADVANCED_ROUND_TRIP_TOP]
+    ins = sorted(ins, key=_effective_price)[:ADVANCED_ROUND_TRIP_TOP]
+    deals: list[Deal] = []
+    for o in outs:
+        o_end = o.legs[-1].arrival_at or o.legs[-1].departure_at
+        for i in ins:
+            if o.kind != DealKind.self_transfer and i.kind != DealKind.self_transfer:
+                continue
+            i_start = i.legs[0].departure_at
+            if o_end and i_start and i_start <= o_end:
+                continue
+            dep, ret = o.departure_date, i.departure_date
+            nights = (ret - dep).days
+            price = round(o.price + i.price, 2)
+            max_stops = max((leg.stops or 0) for leg in o.legs + i.legs)
+            if not _in_ranges(p, dep, ret, nights, price, max_stops, None):
+                continue
+            extra = (o.estimated_total or o.price) + (i.estimated_total or i.price)
+            notes = ["Varios billetes separados: resérvalos por separado con el enlace de cada tramo"]
+            for label, d in (("Ida", o), ("Vuelta", i)):
+                notes += [f"{label}: {n}" for n in d.notes or [] if not n.startswith("Dos billetes")]
+            airlines = list(dict.fromkeys(filter(None, (leg.airline for leg in o.legs + i.legs))))
+            deals.append(Deal(
+                source=o.source,
+                kind=DealKind.self_transfer,
+                origin=p.origin,
+                destination=p.destination,
+                destination_name=o.destination_name,
+                destination_country=o.destination_country,
+                departure_date=dep,
+                return_date=ret,
+                nights=nights,
+                price=price,
+                currency=o.currency,
+                airline="+".join(airlines) or None,
+                stops=o.stops,
+                return_stops=i.stops,
+                duration_minutes=o.duration_minutes,
+                legs=o.legs + i.legs,
+                layover_city=o.layover_city,
+                layover_hours=o.layover_hours,
+                return_layover_city=i.layover_city,
+                return_layover_hours=i.layover_hours,
+                airport_change=bool(o.airport_change or i.airport_change),
+                stopover_type=o.stopover_type or i.stopover_type,
+                estimated_total=round(extra, 2) if (o.estimated_total or i.estimated_total) else None,
+                notes=notes,
+            ))
+    return deals
+
+
+def one_way_view(p: SearchParams, origin: str, destination: str, start, end, flex: int) -> SearchParams:
+    """Copia de los parámetros como búsqueda de solo ida (para cada sentido del modo avanzado)."""
+    return p.model_copy(update=dict(
+        origin=origin, destination=destination, depart_from=start, depart_to=end, depart_flex=flex,
+        flex_days=None, return_from=None, return_to=None, return_flex=None, trip_type=TripType.one_way,
+        min_nights=None, max_nights=None, min_price=None, max_price=None, max_shift_total=None))
+
+
 class FlightDealsService:
     def __init__(self, providers: list[Provider]):
         self.providers = providers
@@ -343,6 +418,24 @@ class FlightDealsService:
         return combine_round_trip(p, outbound, inbound, return_cities), warnings
 
     async def _self_transfer(self, p: SearchParams, prov: Provider) -> tuple[list[Deal], list[str]]:
+        if not p.is_round_trip:
+            return await self._self_transfer_leg(p, prov)
+        # Ida y vuelta: cada sentido se resuelve como un tramo de solo ida y luego se cruzan,
+        # admitiendo también el vuelo directo en un sentido y la conexión propia en el otro.
+        a, b = p.origin, p.destination
+        out_p = one_way_view(p, a, b, p.depart_from, p.depart_to, p.depart_flex_days)
+        in_p = one_way_view(p, b, a, p.return_from, p.return_to, p.return_flex_days)
+        warnings: list[str] = []
+        (outs, w_out), (ins, w_in), direct = await asyncio.gather(
+            self._self_transfer_leg(out_p, prov), self._self_transfer_leg(in_p, prov),
+            self._legs_many(prov, {(a, b), (b, a)}, None, p, warnings,
+                            windows={(a, b): out_p.depart_search_window, (b, a): in_p.depart_search_window}))
+        warnings += [f"Ida: {w}" for w in w_out] + [f"Vuelta: {w}" for w in w_in]
+        outs += [leg_as_deal(leg) for leg in direct[(a, b)]]
+        ins += [leg_as_deal(leg) for leg in direct[(b, a)]]
+        return combine_advanced_round_trip(p, outs, ins), warnings
+
+    async def _self_transfer_leg(self, p: SearchParams, prov: Provider) -> tuple[list[Deal], list[str]]:
         warnings: list[str] = []
         a, b = p.origin, p.destination
         first_w = p.depart_search_window
@@ -474,6 +567,61 @@ class FlightDealsService:
             grid=grid,
         )
 
+    # --- Alternativas cuando no hay resultados --------------------------------
+    async def _nearby(self, prov, legs: list[Leg], attr: str, center: str, p: SearchParams,
+                      exclude: set[str], n: int) -> list[tuple[str, float]]:
+        """Ciudades de la red de rutas a menos de nearby_km de `center`, de más barata a más cara."""
+        best: dict[str, float] = {}
+        for leg in legs:
+            city = getattr(leg, attr)
+            if city not in exclude:
+                best[city] = min(best.get(city, math.inf), leg.price)
+        out = []
+        for city in sorted(best, key=best.get):
+            km = await prov.distance_km(center, city)
+            if km is not None and km <= p.nearby_km:
+                out.append((city, km))
+                if len(out) == n:
+                    break
+        return out
+
+    async def _alternatives(self, p: SearchParams) -> list[Deal]:
+        """Sin resultados: prueba fechas cercanas (±MAX_FLEX_DAYS) y ciudades cercanas de destino/origen."""
+        variants: list[tuple[SearchParams, str]] = []
+        if p.depart_window and (p.depart_flex_days < MAX_FLEX_DAYS
+                                or (p.return_window and p.return_flex_days < MAX_FLEX_DAYS)):
+            variants.append((p.model_copy(update=dict(flex_days=MAX_FLEX_DAYS, depart_flex=None, return_flex=None,
+                                                      max_shift_total=None)),
+                             f"fechas cercanas (±{MAX_FLEX_DAYS} días)"))
+        prov = next((x for x in self._chosen(p) if x.supports_one_way_legs and hasattr(x, "distance_km")), None)
+        if prov and p.destination:
+            # Red de rutas (sin fechas, 2 llamadas cacheadas): qué ciudades cercanas tienen datos
+            wide = await self._legs_many(prov, {(p.origin, None), (None, p.destination)}, None, p, [])
+            exclude = {p.origin, p.destination}
+            # Ciudades cercanas: búsqueda normal y al menos ±NEARBY_FLEX días (con fechas exactas casi nunca hay datos)
+            simple = dict(mode=SearchMode.standard, open_jaw=False, return_origin=None,
+                          flex_days=max(p.flex_days or 0, NEARBY_FLEX) if p.depart_window else None)
+            for city, km in await self._nearby(prov, wide[(p.origin, None)], "destination", p.destination,
+                                               p, exclude, 3):
+                variants.append((p.model_copy(update=dict(destination=city, **simple)),
+                                 f"destino cercano: {city} a {km:.0f} km de {p.destination}"))
+            for city, km in await self._nearby(prov, wide[(None, p.destination)], "origin", p.origin,
+                                               p, exclude, 2):
+                variants.append((p.model_copy(update=dict(origin=city, **simple)),
+                                 f"origen cercano: {city} a {km:.0f} km de {p.origin}"))
+        results = await asyncio.gather(*(self.collect(v) for v, _ in variants), return_exceptions=True)
+        key = sort_key(p)
+        out: list[Deal] = []
+        for (_, reason), res in zip(variants, results):
+            if isinstance(res, Exception):
+                continue
+            found = sorted(res[0], key=key)[:5]      # las 5 mejores de cada alternativa, para variar
+            for d in found:
+                d.alternative = reason
+            out += found
+        out.sort(key=key)
+        return out[: p.limit]
+
     async def search(self, params: SearchParams) -> SearchResponse:
         deals, warnings, used = await self.collect(params)
         key = sort_key(params)
@@ -481,10 +629,18 @@ class FlightDealsService:
             deals = best_per_destination(deals, key)
         deals.sort(key=key)
         deals = deals[: params.limit]
+        alternatives: list[Deal] = []
+        if not deals and used and params.suggest_alternatives:
+            alternatives = await self._alternatives(params)
+            warnings.append(f"Sin resultados con los criterios exactos; {len(alternatives)} alternativas "
+                            "cercanas en `alternatives`" if alternatives else
+                            "Sin resultados ni alternativas cercanas (fechas ±7 días, ciudades a menos de "
+                            f"{params.nearby_km} km): esta ruta apenas tiene búsquedas recientes")
         return SearchResponse(
             query=params.model_dump(mode="json", exclude_none=True),
             count=len(deals),
             sources_used=used,
             warnings=warnings,
             results=deals,
+            alternatives=alternatives,
         )
