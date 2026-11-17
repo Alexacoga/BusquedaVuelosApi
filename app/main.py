@@ -15,8 +15,15 @@ from pydantic import ValidationError
 
 from app.cache import TTLCache
 from app.config import get_settings
-from app.models import (MAX_FLEX_DAYS, MAX_LAYOVER_DAYS, CalendarResponse, SearchMode, SearchParams,
-                        SearchResponse, SortBy, TripType)
+from app.models import (MAX_FLEX_DAYS, MAX_LAYOVER_DAYS, CalendarResponse, HealthResponse,
+                        ProviderErrorResponse, SearchMode, SearchParams, SearchResponse, SortBy, TripType,
+                        ValidationErrorResponse)
+
+ERROR_RESPONSES = {
+    422: {"model": ValidationErrorResponse, "description": "Parámetros no válidos"},
+    502: {"model": ProviderErrorResponse, "description": "Fallaron todas las fuentes"},
+    503: {"model": ProviderErrorResponse, "description": "No hay ninguna fuente configurada"},
+}
 from app.providers import SerpApiProvider, TravelpayoutsProvider
 from app.service import FlightDealsService, NoProvidersError
 
@@ -130,7 +137,7 @@ def search_params(
         raise _validation_error(exc)
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health(service: Annotated[FlightDealsService, Depends(get_service)]):
     return {"status": "ok", "providers": service.available()}
 
@@ -145,7 +152,7 @@ async def _run(coro):
     return result
 
 
-@app.get("/deals", response_model=SearchResponse, response_model_exclude_none=True)
+@app.get("/deals", response_model=SearchResponse, response_model_exclude_none=True, responses=ERROR_RESPONSES)
 async def deals(
     service: Annotated[FlightDealsService, Depends(get_service)],
     params: Annotated[SearchParams, Depends(search_params)],
@@ -154,7 +161,8 @@ async def deals(
     return await _run(service.search(params))
 
 
-@app.get("/calendar", response_model=CalendarResponse, response_model_exclude_none=True)
+@app.get("/calendar", response_model=CalendarResponse, response_model_exclude_none=True,
+         responses=ERROR_RESPONSES)
 async def calendar(
     service: Annotated[FlightDealsService, Depends(get_service)],
     params: Annotated[SearchParams, Depends(search_params)],

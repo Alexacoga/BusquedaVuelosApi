@@ -514,6 +514,14 @@ def test_alternatives_nearby_destination(rec):
     assert off["alternatives"] == []
 
 
+def test_openapi_contract_is_up_to_date():
+    """docs/openapi.json debe coincidir con el código: si falla, ejecuta scripts/export_openapi.py."""
+    import json
+    from pathlib import Path
+    saved = json.loads((Path(__file__).parent.parent / "docs" / "openapi.json").read_text(encoding="utf-8"))
+    assert saved == json.loads(json.dumps(app.openapi()))
+
+
 def test_alternatives_nearby_dates(client):
     body = client.get("/deals", params={"origin": "MAD", "destination": "BCN", "depart_from": D(9),
                                         "trip_type": "one_way", "sources": "travelpayouts"}).json()

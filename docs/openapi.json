@@ -1,0 +1,2075 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flight Deals API",
+    "description": "Busca ofertas de vuelos desde un origen a cualquier destino, con rangos de fechas y precio.",
+    "version": "1.2.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deals": {
+      "get": {
+        "summary": "Deals",
+        "description": "Ofertas ordenadas según `sort`.",
+        "operationId": "deals_deals_get",
+        "parameters": [
+          {
+            "name": "origin",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD",
+              "title": "Origin"
+            },
+            "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD"
+          },
+          {
+            "name": "destination",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "IATA de destino. Vacío = cualquier destino",
+              "title": "Destination"
+            },
+            "description": "IATA de destino. Vacío = cualquier destino"
+          },
+          {
+            "name": "depart_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto",
+              "title": "Depart From"
+            },
+            "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto"
+          },
+          {
+            "name": "depart_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ida hasta (YYYY-MM-DD)",
+              "title": "Depart To"
+            },
+            "description": "Ida hasta (YYYY-MM-DD)"
+          },
+          {
+            "name": "return_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta",
+              "title": "Return From"
+            },
+            "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta"
+          },
+          {
+            "name": "return_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Vuelta hasta",
+              "title": "Return To"
+            },
+            "description": "Vuelta hasta"
+          },
+          {
+            "name": "trip_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TripType",
+              "description": "auto | one_way | round_trip",
+              "default": "auto"
+            },
+            "description": "auto | one_way | round_trip"
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Price"
+            }
+          },
+          {
+            "name": "max_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Price"
+            }
+          },
+          {
+            "name": "min_nights",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Estancia mínima (ida y vuelta)",
+              "title": "Min Nights"
+            },
+            "description": "Estancia mínima (ida y vuelta)"
+          },
+          {
+            "name": "max_nights",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Estancia máxima (ida y vuelta)",
+              "title": "Max Nights"
+            },
+            "description": "Estancia máxima (ida y vuelta)"
+          },
+          {
+            "name": "direct_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Direct Only"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Currency"
+            }
+          },
+          {
+            "name": "sources",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "travelpayouts y/o google_flights. Vacío = todos",
+              "title": "Sources"
+            },
+            "description": "travelpayouts y/o google_flights. Vacío = todos"
+          },
+          {
+            "name": "group_by_destination",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Solo la mejor oferta por destino",
+              "default": false,
+              "title": "Group By Destination"
+            },
+            "description": "Solo la mejor oferta por destino"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "flex_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 7,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Margen ± días en ida y vuelta",
+              "title": "Flex Days"
+            },
+            "description": "Margen ± días en ida y vuelta"
+          },
+          {
+            "name": "depart_flex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 7,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Margen ± días solo en la ida",
+              "title": "Depart Flex"
+            },
+            "description": "Margen ± días solo en la ida"
+          },
+          {
+            "name": "return_flex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 7,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Margen ± días solo en la vuelta",
+              "title": "Return Flex"
+            },
+            "description": "Margen ± días solo en la vuelta"
+          },
+          {
+            "name": "max_shift_total",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Máx. días movidos sumando ida y vuelta",
+              "title": "Max Shift Total"
+            },
+            "description": "Máx. días movidos sumando ida y vuelta"
+          },
+          {
+            "name": "shift_penalty",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "description": "€ por día movido (para sort=score)",
+              "default": 0,
+              "title": "Shift Penalty"
+            },
+            "description": "€ por día movido (para sort=score)"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortBy",
+              "description": "price | price_per_night | nights_desc | closest | score | duration",
+              "default": "price"
+            },
+            "description": "price | price_per_night | nights_desc | closest | score | duration"
+          },
+          {
+            "name": "split_tickets",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Compara también ida y vuelta con dos billetes de solo ida",
+              "default": false,
+              "title": "Split Tickets"
+            },
+            "description": "Compara también ida y vuelta con dos billetes de solo ida"
+          },
+          {
+            "name": "open_jaw",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Volver desde otra ciudad (del mismo país si no se indica)",
+              "default": false,
+              "title": "Open Jaw"
+            },
+            "description": "Volver desde otra ciudad (del mismo país si no se indica)"
+          },
+          {
+            "name": "return_origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ciudad desde la que volver (implica open-jaw)",
+              "title": "Return Origin"
+            },
+            "description": "Ciudad desde la que volver (implica open-jaw)"
+          },
+          {
+            "name": "open_jaw_max_km",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3000,
+              "minimum": 50,
+              "description": "open_jaw sin ciudad: distancia máx. entre destino y vuelta",
+              "default": 600,
+              "title": "Open Jaw Max Km"
+            },
+            "description": "open_jaw sin ciudad: distancia máx. entre destino y vuelta"
+          },
+          {
+            "name": "max_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 15,
+              "minimum": 1,
+              "description": "Destinos/ciudades a combinar como máximo",
+              "default": 8,
+              "title": "Max Candidates"
+            },
+            "description": "Destinos/ciudades a combinar como máximo"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SearchMode",
+              "description": "standard | advanced (enlaza dos vuelos A→X→B; con fechas de vuelta, también en la vuelta)",
+              "default": "standard"
+            },
+            "description": "standard | advanced (enlaza dos vuelos A→X→B; con fechas de vuelta, también en la vuelta)"
+          },
+          {
+            "name": "max_layover_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3,
+              "minimum": 0,
+              "description": "advanced: noches máx. en la ciudad intermedia",
+              "default": 1,
+              "title": "Max Layover Days"
+            },
+            "description": "advanced: noches máx. en la ciudad intermedia"
+          },
+          {
+            "name": "min_connection_hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 24,
+              "minimum": 1,
+              "description": "advanced: margen mínimo entre vuelos",
+              "default": 3,
+              "title": "Min Connection Hours"
+            },
+            "description": "advanced: margen mínimo entre vuelos"
+          },
+          {
+            "name": "allow_airport_change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "advanced: permitir llegar y salir de aeropuertos distintos de la misma ciudad",
+              "default": true,
+              "title": "Allow Airport Change"
+            },
+            "description": "advanced: permitir llegar y salir de aeropuertos distintos de la misma ciudad"
+          },
+          {
+            "name": "stopover_cost_per_night",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "description": "advanced: coste estimado por noche en la ciudad intermedia",
+              "default": 0,
+              "title": "Stopover Cost Per Night"
+            },
+            "description": "advanced: coste estimado por noche en la ciudad intermedia"
+          },
+          {
+            "name": "suggest_alternatives",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Si no hay resultados, proponer fechas (±7 días) y ciudades cercanas en `alternatives`",
+              "default": true,
+              "title": "Suggest Alternatives"
+            },
+            "description": "Si no hay resultados, proponer fechas (±7 días) y ciudades cercanas en `alternatives`"
+          },
+          {
+            "name": "nearby_km",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1500,
+              "minimum": 50,
+              "description": "Distancia máx. de las ciudades alternativas",
+              "default": 400,
+              "title": "Nearby Km"
+            },
+            "description": "Distancia máx. de las ciudades alternativas"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Parámetros no válidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Fallaron todas las fuentes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No hay ninguna fuente configurada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/calendar": {
+      "get": {
+        "summary": "Calendar",
+        "description": "Precio más barato por día de ida (y de vuelta). Acepta los mismos parámetros que /deals;\n`limit`, `sort` y `group_by_destination` no se usan. Requiere fechas de ida.",
+        "operationId": "calendar_calendar_get",
+        "parameters": [
+          {
+            "name": "origin",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD",
+              "title": "Origin"
+            },
+            "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD"
+          },
+          {
+            "name": "destination",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "IATA de destino. Vacío = cualquier destino",
+              "title": "Destination"
+            },
+            "description": "IATA de destino. Vacío = cualquier destino"
+          },
+          {
+            "name": "depart_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto",
+              "title": "Depart From"
+            },
+            "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto"
+          },
+          {
+            "name": "depart_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ida hasta (YYYY-MM-DD)",
+              "title": "Depart To"
+            },
+            "description": "Ida hasta (YYYY-MM-DD)"
+          },
+          {
+            "name": "return_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta",
+              "title": "Return From"
+            },
+            "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta"
+          },
+          {
+            "name": "return_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Vuelta hasta",
+              "title": "Return To"
+            },
+            "description": "Vuelta hasta"
+          },
+          {
+            "name": "trip_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TripType",
+              "description": "auto | one_way | round_trip",
+              "default": "auto"
+            },
+            "description": "auto | one_way | round_trip"
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Price"
+            }
+          },
+          {
+            "name": "max_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Price"
+            }
+          },
+          {
+            "name": "min_nights",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Estancia mínima (ida y vuelta)",
+              "title": "Min Nights"
+            },
+            "description": "Estancia mínima (ida y vuelta)"
+          },
+          {
+            "name": "max_nights",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Estancia máxima (ida y vuelta)",
+              "title": "Max Nights"
+            },
+            "description": "Estancia máxima (ida y vuelta)"
+          },
+          {
+            "name": "direct_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Direct Only"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Currency"
+            }
+          },
+          {
+            "name": "sources",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "travelpayouts y/o google_flights. Vacío = todos",
+              "title": "Sources"
+            },
+            "description": "travelpayouts y/o google_flights. Vacío = todos"
+          },
+          {
+            "name": "group_by_destination",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Solo la mejor oferta por destino",
+              "default": false,
+              "title": "Group By Destination"
+            },
+            "description": "Solo la mejor oferta por destino"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "flex_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 7,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Margen ± días en ida y vuelta",
+              "title": "Flex Days"
+            },
+            "description": "Margen ± días en ida y vuelta"
+          },
+          {
+            "name": "depart_flex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 7,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Margen ± días solo en la ida",
+              "title": "Depart Flex"
+            },
+            "description": "Margen ± días solo en la ida"
+          },
+          {
+            "name": "return_flex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 7,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Margen ± días solo en la vuelta",
+              "title": "Return Flex"
+            },
+            "description": "Margen ± días solo en la vuelta"
+          },
+          {
+            "name": "max_shift_total",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Máx. días movidos sumando ida y vuelta",
+              "title": "Max Shift Total"
+            },
+            "description": "Máx. días movidos sumando ida y vuelta"
+          },
+          {
+            "name": "shift_penalty",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "description": "€ por día movido (para sort=score)",
+              "default": 0,
+              "title": "Shift Penalty"
+            },
+            "description": "€ por día movido (para sort=score)"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortBy",
+              "description": "price | price_per_night | nights_desc | closest | score | duration",
+              "default": "price"
+            },
+            "description": "price | price_per_night | nights_desc | closest | score | duration"
+          },
+          {
+            "name": "split_tickets",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Compara también ida y vuelta con dos billetes de solo ida",
+              "default": false,
+              "title": "Split Tickets"
+            },
+            "description": "Compara también ida y vuelta con dos billetes de solo ida"
+          },
+          {
+            "name": "open_jaw",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Volver desde otra ciudad (del mismo país si no se indica)",
+              "default": false,
+              "title": "Open Jaw"
+            },
+            "description": "Volver desde otra ciudad (del mismo país si no se indica)"
+          },
+          {
+            "name": "return_origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ciudad desde la que volver (implica open-jaw)",
+              "title": "Return Origin"
+            },
+            "description": "Ciudad desde la que volver (implica open-jaw)"
+          },
+          {
+            "name": "open_jaw_max_km",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3000,
+              "minimum": 50,
+              "description": "open_jaw sin ciudad: distancia máx. entre destino y vuelta",
+              "default": 600,
+              "title": "Open Jaw Max Km"
+            },
+            "description": "open_jaw sin ciudad: distancia máx. entre destino y vuelta"
+          },
+          {
+            "name": "max_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 15,
+              "minimum": 1,
+              "description": "Destinos/ciudades a combinar como máximo",
+              "default": 8,
+              "title": "Max Candidates"
+            },
+            "description": "Destinos/ciudades a combinar como máximo"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SearchMode",
+              "description": "standard | advanced (enlaza dos vuelos A→X→B; con fechas de vuelta, también en la vuelta)",
+              "default": "standard"
+            },
+            "description": "standard | advanced (enlaza dos vuelos A→X→B; con fechas de vuelta, también en la vuelta)"
+          },
+          {
+            "name": "max_layover_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3,
+              "minimum": 0,
+              "description": "advanced: noches máx. en la ciudad intermedia",
+              "default": 1,
+              "title": "Max Layover Days"
+            },
+            "description": "advanced: noches máx. en la ciudad intermedia"
+          },
+          {
+            "name": "min_connection_hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 24,
+              "minimum": 1,
+              "description": "advanced: margen mínimo entre vuelos",
+              "default": 3,
+              "title": "Min Connection Hours"
+            },
+            "description": "advanced: margen mínimo entre vuelos"
+          },
+          {
+            "name": "allow_airport_change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "advanced: permitir llegar y salir de aeropuertos distintos de la misma ciudad",
+              "default": true,
+              "title": "Allow Airport Change"
+            },
+            "description": "advanced: permitir llegar y salir de aeropuertos distintos de la misma ciudad"
+          },
+          {
+            "name": "stopover_cost_per_night",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "description": "advanced: coste estimado por noche en la ciudad intermedia",
+              "default": 0,
+              "title": "Stopover Cost Per Night"
+            },
+            "description": "advanced: coste estimado por noche en la ciudad intermedia"
+          },
+          {
+            "name": "suggest_alternatives",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Si no hay resultados, proponer fechas (±7 días) y ciudades cercanas en `alternatives`",
+              "default": true,
+              "title": "Suggest Alternatives"
+            },
+            "description": "Si no hay resultados, proponer fechas (±7 días) y ciudades cercanas en `alternatives`"
+          },
+          {
+            "name": "nearby_km",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1500,
+              "minimum": 50,
+              "description": "Distancia máx. de las ciudades alternativas",
+              "default": 400,
+              "title": "Nearby Km"
+            },
+            "description": "Distancia máx. de las ciudades alternativas"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Parámetros no válidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Fallaron todas las fuentes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No hay ninguna fuente configurada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CalendarCell": {
+        "properties": {
+          "departure_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Departure Date"
+          },
+          "return_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Date"
+          },
+          "nights": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nights"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "price_level": {
+            "type": "string",
+            "title": "Price Level"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          },
+          "destination_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Name"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DealKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "airline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airline"
+          },
+          "stops": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stops"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "departure_date",
+          "price",
+          "price_level",
+          "destination"
+        ],
+        "title": "CalendarCell",
+        "description": "Precio más barato para una fecha de ida (y de vuelta, si es ida y vuelta)."
+      },
+      "CalendarResponse": {
+        "properties": {
+          "query": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Query"
+          },
+          "trip": {
+            "type": "string",
+            "title": "Trip"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources Used"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          },
+          "stats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalendarStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cheapest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalendarCell"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarCell"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "grid": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Grid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "trip",
+          "currency",
+          "sources_used",
+          "cells",
+          "grid"
+        ],
+        "title": "CalendarResponse"
+      },
+      "CalendarStats": {
+        "properties": {
+          "cells": {
+            "type": "integer",
+            "title": "Cells"
+          },
+          "min": {
+            "type": "number",
+            "title": "Min"
+          },
+          "max": {
+            "type": "number",
+            "title": "Max"
+          },
+          "avg": {
+            "type": "number",
+            "title": "Avg"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cells",
+          "min",
+          "max",
+          "avg"
+        ],
+        "title": "CalendarStats"
+      },
+      "Deal": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DealKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          },
+          "destination_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Name"
+          },
+          "destination_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Country"
+          },
+          "departure_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Departure Date"
+          },
+          "return_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Date"
+          },
+          "nights": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nights"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "airline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airline"
+          },
+          "flight_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flight Number"
+          },
+          "stops": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stops"
+          },
+          "return_stops": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Stops"
+          },
+          "duration_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Minutes"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          },
+          "found_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Found At"
+          },
+          "depart_shift": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depart Shift"
+          },
+          "return_shift": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Shift"
+          },
+          "savings_vs_exact": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Savings Vs Exact"
+          },
+          "return_origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Origin"
+          },
+          "legs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Leg"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legs"
+          },
+          "layover_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layover Hours"
+          },
+          "layover_city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layover City"
+          },
+          "return_layover_city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Layover City"
+          },
+          "return_layover_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Layover Hours"
+          },
+          "airport_change": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airport Change"
+          },
+          "stopover_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopover Type"
+          },
+          "estimated_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Total"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "alternative": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "origin",
+          "destination",
+          "departure_date",
+          "price",
+          "currency"
+        ],
+        "title": "Deal"
+      },
+      "DealKind": {
+        "type": "string",
+        "enum": [
+          "one_way",
+          "round_trip",
+          "split",
+          "open_jaw",
+          "self_transfer"
+        ],
+        "title": "DealKind"
+      },
+      "FieldError": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "error"
+        ],
+        "title": "FieldError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "providers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Providers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "providers"
+        ],
+        "title": "HealthResponse"
+      },
+      "Leg": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "origin_airport": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Airport"
+          },
+          "origin_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Country"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          },
+          "destination_airport": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Airport"
+          },
+          "destination_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Name"
+          },
+          "destination_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Country"
+          },
+          "departure_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Departure At"
+          },
+          "arrival_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrival At"
+          },
+          "departure_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Departure Date"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "airline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airline"
+          },
+          "flight_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flight Number"
+          },
+          "stops": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stops"
+          },
+          "duration_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Minutes"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "origin",
+          "destination",
+          "departure_date",
+          "price",
+          "currency"
+        ],
+        "title": "Leg",
+        "description": "Un tramo/billete individual dentro de una combinación."
+      },
+      "ProviderErrorResponse": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ProviderErrorResponse",
+        "description": "502: fallaron todas las fuentes (lista de avisos) · 503: no hay fuentes configuradas (texto)."
+      },
+      "SearchMode": {
+        "type": "string",
+        "enum": [
+          "standard",
+          "advanced"
+        ],
+        "title": "SearchMode"
+      },
+      "SearchResponse": {
+        "properties": {
+          "query": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Query"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources Used"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/Deal"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "alternatives": {
+            "items": {
+              "$ref": "#/components/schemas/Deal"
+            },
+            "type": "array",
+            "title": "Alternatives",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "count",
+          "sources_used",
+          "results"
+        ],
+        "title": "SearchResponse"
+      },
+      "SortBy": {
+        "type": "string",
+        "enum": [
+          "price",
+          "price_per_night",
+          "nights_desc",
+          "closest",
+          "score",
+          "duration"
+        ],
+        "title": "SortBy"
+      },
+      "TripType": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "one_way",
+          "round_trip"
+        ],
+        "title": "TripType"
+      },
+      "ValidationErrorResponse": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ValidationErrorResponse",
+        "description": "422: parámetros no válidos."
+      }
+    }
+  }
+}

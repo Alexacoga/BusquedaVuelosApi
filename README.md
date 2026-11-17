@@ -293,7 +293,8 @@ GET /deals  ·  GET /calendar
 | `app/providers/serpapi.py` | Construye consultas a Google Travel Explore (opcional) |
 | `docs/ARQUITECTURA.md` | Diagramas de llamadas (Mermaid) y resumen del contrato |
 | `docs/openapi.json` | Contrato OpenAPI 3.1 exportado (`python scripts/export_openapi.py`) |
-| `tests/test_api.py` | 33 tests con respuestas simuladas: no usan red ni claves |
+| `scripts/export_openapi.py` | Regenera `docs/openapi.json` desde el código |
+| `tests/test_api.py` | 34 tests con respuestas simuladas: no usan red ni claves |
 
 ### Tipos de error de proveedor
 - `ProviderQueryError` (HTTP 400): el proveedor funciona pero no acepta la consulta (p. ej. IATA

@@ -296,6 +296,26 @@ class SearchResponse(BaseModel):
     alternatives: list[Deal] = []
 
 
+class HealthResponse(BaseModel):
+    status: str
+    providers: list[str]
+
+
+class FieldError(BaseModel):
+    field: str
+    error: str
+
+
+class ValidationErrorResponse(BaseModel):
+    """422: parámetros no válidos."""
+    detail: list[FieldError]
+
+
+class ProviderErrorResponse(BaseModel):
+    """502: fallaron todas las fuentes (lista de avisos) · 503: no hay fuentes configuradas (texto)."""
+    detail: str | list[str]
+
+
 class CalendarCell(BaseModel):
     """Precio más barato para una fecha de ida (y de vuelta, si es ida y vuelta)."""
     departure_date: date
