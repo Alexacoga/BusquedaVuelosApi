@@ -7,6 +7,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 MAX_FLEX_DAYS = 7
+MAX_LAYOVER_DAYS = 3
 
 
 class TripType(str, Enum):
@@ -21,6 +22,12 @@ class SortBy(str, Enum):
     nights_desc = "nights_desc"          # estancia más larga primero
     closest = "closest"                  # más parecido a las fechas pedidas
     score = "score"                      # precio + shift_penalty € por día desplazado
+    duration = "duration"                # menos tiempo total de viaje primero
+
+
+class SearchMode(str, Enum):
+    standard = "standard"                # vuelos tal cual los vende el proveedor
+    advanced = "advanced"                # además enlaza dos vuelos por cuenta propia (A→X→B)
 
 
 class DealKind(str, Enum):
@@ -117,6 +124,12 @@ class SearchParams(BaseModel):
     return_origin: str | None = None
     open_jaw_max_km: int = Field(600, ge=50, le=3000)
     max_candidates: int = Field(8, ge=1, le=15)
+    # --- Modo avanzado: dos vuelos enlazados por cuenta propia ---------------
+    mode: SearchMode = SearchMode.standard
+    max_layover_days: int = Field(1, ge=0, le=MAX_LAYOVER_DAYS)
+    min_connection_hours: float = Field(3, ge=1, le=24)
+    allow_airport_change: bool = True
+    stopover_cost_per_night: float = Field(0, ge=0)
 
     @field_validator("origin", "destination", "return_origin")
     @classmethod
@@ -156,6 +169,14 @@ class SearchParams(BaseModel):
             raise ValueError("open_jaw / return_origin solo tienen sentido en ida y vuelta")
         if self.return_origin and self.return_origin == self.origin:
             raise ValueError("return_origin no puede ser igual al origen")
+        if self.mode == SearchMode.advanced:
+            if not self.destination:
+                raise ValueError("mode=advanced necesita destination (el tramo A→B que quieres abaratar)")
+            if self.is_round_trip:
+                raise ValueError("mode=advanced es para un tramo de solo ida; para ida y vuelta "
+                                 "haz una búsqueda por cada tramo")
+            if self.depart_window is None:
+                raise ValueError("mode=advanced necesita fechas de ida (depart_from y/o depart_to)")
         return self
 
     # --- Derivados -------------------------------------------------------

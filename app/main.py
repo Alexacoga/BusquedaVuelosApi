@@ -15,7 +15,8 @@ from pydantic import ValidationError
 
 from app.cache import TTLCache
 from app.config import get_settings
-from app.models import MAX_FLEX_DAYS, CalendarResponse, SearchParams, SearchResponse, SortBy, TripType
+from app.models import (MAX_FLEX_DAYS, MAX_LAYOVER_DAYS, CalendarResponse, SearchMode, SearchParams,
+                        SearchResponse, SortBy, TripType)
 from app.providers import SerpApiProvider, TravelpayoutsProvider
 from app.service import FlightDealsService, NoProvidersError
 
@@ -84,7 +85,8 @@ def search_params(
     return_flex: Annotated[int | None, Query(ge=0, le=MAX_FLEX_DAYS, description="Margen ± días solo en la vuelta")] = None,
     max_shift_total: Annotated[int | None, Query(ge=0, description="Máx. días movidos sumando ida y vuelta")] = None,
     shift_penalty: Annotated[float, Query(ge=0, description="€ por día movido (para sort=score)")] = 0,
-    sort: Annotated[SortBy, Query(description="price | price_per_night | nights_desc | closest | score")] = SortBy.price,
+    sort: Annotated[SortBy, Query(description="price | price_per_night | nights_desc | closest | score | "
+                                              "duration")] = SortBy.price,
     # Billetes sueltos / open-jaw
     split_tickets: Annotated[bool, Query(description="Compara también ida y vuelta con dos billetes de solo ida")] = False,
     open_jaw: Annotated[bool, Query(description="Volver desde otra ciudad (del mismo país si no se indica)")] = False,
@@ -92,6 +94,15 @@ def search_params(
     open_jaw_max_km: Annotated[int, Query(ge=50, le=3000,
                                           description="open_jaw sin ciudad: distancia máx. entre destino y vuelta")] = 600,
     max_candidates: Annotated[int, Query(ge=1, le=15, description="Destinos/ciudades a combinar como máximo")] = 8,
+    # Modo avanzado
+    mode: Annotated[SearchMode, Query(description="standard | advanced (enlaza dos vuelos A→X→B)")] = SearchMode.standard,
+    max_layover_days: Annotated[int, Query(ge=0, le=MAX_LAYOVER_DAYS,
+                                           description="advanced: noches máx. en la ciudad intermedia")] = 1,
+    min_connection_hours: Annotated[float, Query(ge=1, le=24, description="advanced: margen mínimo entre vuelos")] = 3,
+    allow_airport_change: Annotated[bool, Query(description="advanced: permitir llegar y salir de aeropuertos "
+                                                            "distintos de la misma ciudad")] = True,
+    stopover_cost_per_night: Annotated[float, Query(ge=0, description="advanced: coste estimado por noche "
+                                                                       "en la ciudad intermedia")] = 0,
 ) -> SearchParams:
     try:
         return SearchParams(
@@ -106,6 +117,8 @@ def search_params(
             max_shift_total=max_shift_total, shift_penalty=shift_penalty, sort=sort,
             split_tickets=split_tickets, open_jaw=open_jaw, return_origin=return_origin,
             open_jaw_max_km=open_jaw_max_km, max_candidates=max_candidates,
+            mode=mode, max_layover_days=max_layover_days, min_connection_hours=min_connection_hours,
+            allow_airport_change=allow_airport_change, stopover_cost_per_night=stopover_cost_per_night,
         )
     except ValidationError as exc:
         raise _validation_error(exc)

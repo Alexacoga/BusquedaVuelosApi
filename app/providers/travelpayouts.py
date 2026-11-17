@@ -52,6 +52,7 @@ class TravelpayoutsProvider(Provider):
     def _base_query(self, currency: str, one_way: bool, direct: bool) -> dict:
         return {
             "currency": currency.lower(),
+            # sin departure_at, Travelpayouts devuelve vuelos de los próximos meses (red de rutas)
             "market": self.settings.travelpayouts_market,
             "one_way": "true" if one_way else "false",
             "direct": "true" if direct else "false",

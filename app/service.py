@@ -4,8 +4,8 @@ from __future__ import annotations
 import asyncio
 import math
 
-from app.models import (CalendarCell, CalendarResponse, CalendarStats, Deal, DealKind, Leg, SearchParams,
-                        SearchResponse, SortBy)
+from app.models import (CalendarCell, CalendarResponse, CalendarStats, Deal, DealKind, Leg, SearchMode,
+                        SearchParams, SearchResponse, SortBy)
 from app.providers.base import Provider, ProviderError, ProviderQueryError
 
 STANDARD_KINDS = (DealKind.one_way, DealKind.round_trip)
@@ -49,14 +49,18 @@ def _shift(window, d):
 
 
 def matches(deal: Deal, p: SearchParams) -> bool:
-    return _in_ranges(p, deal.departure_date, deal.return_date, deal.nights, deal.price,
-                      deal.stops, deal.return_stops)
+    stops, return_stops = deal.stops, deal.return_stops
+    if deal.kind == DealKind.self_transfer and deal.legs:
+        # la conexión propia no cuenta como escala: direct_only exige que cada tramo sea directo
+        stops, return_stops = deal.legs[0].stops, deal.legs[1].stops
+    return _in_ranges(p, deal.departure_date, deal.return_date, deal.nights, deal.price, stops, return_stops)
 
 
 def dedupe(deals: list[Deal]) -> list[Deal]:
     best: dict[tuple, Deal] = {}
     for d in deals:
-        key = (d.kind, d.destination, d.return_origin, d.departure_date, d.return_date, d.airline)
+        key = (d.kind, d.destination, d.return_origin, d.layover_city, d.departure_date, d.return_date,
+               d.airline, d.legs[0].departure_at if d.legs else None)
         if key not in best or d.price < best[key].price:
             best[key] = d
     return list(best.values())
@@ -79,6 +83,8 @@ def sort_key(p: SearchParams):
             return (d.total_shift, price)
         if p.sort == SortBy.score:
             return (price + p.shift_penalty * d.total_shift, price)
+        if p.sort == SortBy.duration:
+            return (d.duration_minutes if d.duration_minutes is not None else math.inf, price)
         return (price, d.departure_date)
     return key
 
@@ -144,6 +150,83 @@ def combine_round_trip(p: SearchParams, outbound: dict[str, list[Leg]], inbound:
     return deals
 
 
+SELF_TRANSFER_WARNING = (
+    "Modo avanzado: las combinaciones self_transfer son dos billetes independientes. Si el primer vuelo "
+    "se retrasa y pierdes el segundo, no hay protección ni compensación; recoges y vuelves a facturar "
+    "el equipaje; revisa visados/Schengen en la ciudad intermedia y confirma el precio de AMBOS tramos."
+)
+
+
+def _merge_legs(*groups: list[Leg]) -> list[Leg]:
+    seen: dict[tuple, Leg] = {}
+    for group in groups:
+        for leg in group:
+            key = (leg.origin, leg.destination, leg.departure_at, leg.airline, leg.flight_number)
+            if key not in seen or leg.price < seen[key].price:
+                seen[key] = leg
+    return list(seen.values())
+
+
+def combine_self_transfer(p: SearchParams, first: dict[str, list[Leg]], second: dict[str, list[Leg]]) -> list[Deal]:
+    """Enlaza A→X con X→B respetando la conexión mínima y los días máximos en la ciudad intermedia."""
+    deals: list[Deal] = []
+    min_gap_h = p.min_connection_hours
+    for hub, legs1 in first.items():
+        legs2 = second.get(hub, [])
+        for a in legs1:
+            if not a.arrival_at:
+                continue
+            for b in legs2:
+                if not b.departure_at:
+                    continue
+                gap_h = (b.departure_at - a.arrival_at).total_seconds() / 3600
+                if gap_h < min_gap_h:
+                    continue
+                arrival_local = a.arrival_at.astimezone(b.departure_at.tzinfo)
+                nights = (b.departure_at.date() - arrival_local.date()).days
+                if nights > p.max_layover_days:
+                    continue
+                airport_change = bool(a.destination_airport and b.origin_airport
+                                      and a.destination_airport != b.origin_airport)
+                if airport_change and not p.allow_airport_change:
+                    continue
+                price = round(a.price + b.price, 2)
+                if not _in_ranges(p, a.departure_date, None, None, price, a.stops, b.stops):
+                    continue
+                total = round(price + nights * p.stopover_cost_per_night, 2) if p.stopover_cost_per_night else None
+                notes = ["Dos billetes separados: resérvalos por separado con el enlace de cada tramo",
+                         f"Conexión por tu cuenta en {hub}: {gap_h:.1f} h"]
+                if airport_change:
+                    notes.append(f"Cambio de aeropuerto en {hub}: llegas a {a.destination_airport} "
+                                 f"y sales de {b.origin_airport}")
+                if nights:
+                    notes.append(f"{nights} noche(s) en {hub}")
+                end = b.arrival_at or b.departure_at
+                deals.append(Deal(
+                    source=a.source,
+                    kind=DealKind.self_transfer,
+                    origin=p.origin,
+                    destination=p.destination,
+                    destination_name=b.destination_name,
+                    destination_country=b.destination_country,
+                    departure_date=a.departure_date,
+                    price=price,
+                    currency=a.currency,
+                    airline="+".join(filter(None, (a.airline, b.airline))) or None,
+                    stops=(a.stops or 0) + (b.stops or 0) + 1,
+                    duration_minutes=int((end - a.departure_at).total_seconds() // 60),
+                    legs=[a, b],
+                    layover_city=hub,
+                    layover_hours=round(gap_h, 1),
+                    airport_change=airport_change,
+                    # connection: mismo día · overnight: pasas una noche · stopover: 24 h o más en la ciudad
+                    stopover_type="stopover" if gap_h >= 24 else "overnight" if nights else "connection",
+                    estimated_total=total,
+                    notes=notes,
+                ))
+    return deals
+
+
 class FlightDealsService:
     def __init__(self, providers: list[Provider]):
         self.providers = providers
@@ -178,9 +261,11 @@ class FlightDealsService:
             deals.extend(found)
 
     async def _legs_many(self, prov: Provider, routes: set[tuple[str | None, str | None]], window, params,
-                         warnings: list[str]) -> dict[tuple, list[Leg]]:
+                         warnings: list[str], windows: dict | None = None) -> dict[tuple, list[Leg]]:
+        """Billetes de solo ida para varias rutas en paralelo; `windows` permite una ventana por ruta."""
         routes = sorted(routes, key=str)
-        res = await asyncio.gather(*(prov.one_way_legs(o, d, window, params.currency, params.direct_only)
+        res = await asyncio.gather(*(prov.one_way_legs(o, d, (windows or {}).get((o, d), window),
+                                                       params.currency, params.direct_only)
                                      for o, d in routes), return_exceptions=True)
         out: dict[tuple, list[Leg]] = {}
         for route, r in zip(routes, res):
@@ -214,10 +299,10 @@ class FlightDealsService:
         if p.return_origin:
             return_cities = {d: [p.return_origin] for d in dests}
         elif p.open_jaw:
-            # Otras ciudades del mismo país que el destino conectadas con el origen. Se descubren con
-            # dos consultas amplias (cualquiera→origen y origen→cualquiera), porque cada una solo
-            # devuelve la opción más barata de cada día.
-            wide = await self._legs_many(prov, {(None, p.origin), (p.origin, None)}, rsw, p, warnings)
+            # Ciudades cercanas al destino conectadas con el origen. Se descubren con la red de rutas
+            # (cualquiera→origen y origen→cualquiera, sin fechas): con fechas solo devuelve la opción
+            # más barata de cada día y salen muy pocas ciudades.
+            wide = await self._legs_many(prov, {(None, p.origin), (p.origin, None)}, None, p, warnings)
             country_of: dict[str, str | None] = {}
             price_of: dict[str, float] = {}
             for leg in wide[(None, p.origin)]:
@@ -252,6 +337,45 @@ class FlightDealsService:
         inbound = {c: inbound_res[(c, p.origin)] for c, _ in in_routes}
         return combine_round_trip(p, outbound, inbound, return_cities), warnings
 
+    async def _self_transfer(self, p: SearchParams, prov: Provider) -> tuple[list[Deal], list[str]]:
+        warnings: list[str] = []
+        a, b = p.origin, p.destination
+        first_w = p.depart_search_window
+        # El segundo vuelo puede salir hasta max_layover_days (+1 por llegadas de madrugada) después
+        second_w = first_w.expand(0, p.max_layover_days + 1)
+
+        # 1) Descubrir ciudades intermedias con la red de rutas: A→cualquiera y cualquiera→B SIN filtro
+        #    de fechas (con fechas solo devuelve la opción más barata de cada día y casi nunca coinciden).
+        wide = await self._legs_many(prov, {(a, None), (None, b)}, None, p, warnings)
+        network_a, network_b = wide[(a, None)], wide[(None, b)]
+        best1: dict[str, float] = {}
+        best2: dict[str, float] = {}
+        for leg in network_a:
+            best1[leg.destination] = min(best1.get(leg.destination, math.inf), leg.price)
+        for leg in network_b:
+            best2[leg.origin] = min(best2.get(leg.origin, math.inf), leg.price)
+        # Solo sirven ciudades conectadas por los dos lados; se priorizan las rutas más baratas
+        hubs = sorted((h for h in best1.keys() & best2.keys() if h not in {a, b}),
+                      key=lambda h: best1[h] + best2[h])[: p.max_candidates]
+        if not hubs:
+            warnings.append(f"Modo avanzado: no hay ciudades intermedias conectadas con {a} y con {b}")
+            return [], warnings
+        from_a = [l for l in network_a if first_w.contains(l.departure_date)]
+        to_b = [l for l in network_b if second_w.contains(l.departure_date)]
+
+        # 2) Vuelos concretos A→X y X→B para cada ciudad intermedia (en paralelo)
+        fixed = await self._legs_many(
+            prov, {(a, h) for h in hubs} | {(h, b) for h in hubs}, None, p, warnings,
+            windows={**{(a, h): first_w for h in hubs}, **{(h, b): second_w for h in hubs}})
+        first = {h: _merge_legs(fixed[(a, h)], [l for l in from_a if l.destination == h]) for h in hubs}
+        second = {h: _merge_legs(fixed[(h, b)], [l for l in to_b if l.origin == h]) for h in hubs}
+        deals = combine_self_transfer(p, first, second)
+        if not deals:
+            warnings.append(f"Modo avanzado: se probaron {len(hubs)} ciudades intermedias ({', '.join(hubs)}) "
+                            "pero no hay vuelos con datos que enlacen en esas fechas; amplía flex_days o "
+                            "max_layover_days")
+        return deals, warnings
+
     async def collect(self, params: SearchParams) -> tuple[list[Deal], list[str], list[str]]:
         """Consulta proveedores y devuelve (ofertas filtradas sin ordenar, avisos, fuentes usadas)."""
         chosen = self._chosen(params)
@@ -259,14 +383,23 @@ class FlightDealsService:
         deals: list[Deal] = []
         used: list[str] = []
 
+        leg_provs = [prov for prov in chosen if prov.supports_one_way_legs]
+        advanced = params.mode == SearchMode.advanced
         tasks = [prov.search(params) for prov in chosen]
-        split_provs = [prov for prov in chosen if params.uses_split and prov.supports_one_way_legs]
-        tasks += [self._split_tickets(params, prov) for prov in split_provs]
+        owners = list(chosen)
+        if params.uses_split:
+            tasks += [self._split_tickets(params, prov) for prov in leg_provs]
+            owners += leg_provs
+        if advanced:
+            tasks += [self._self_transfer(params, prov) for prov in leg_provs]
+            owners += leg_provs
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for provider, res in zip(chosen + split_provs, results):
+        for provider, res in zip(owners, results):
             self._absorb(provider, res, deals, warnings, used)
-        if params.uses_split and not split_provs:
-            warnings.append("Billetes sueltos / open-jaw solo están disponibles con travelpayouts")
+        if (params.uses_split or advanced) and not leg_provs:
+            warnings.append("Billetes sueltos, open-jaw y modo avanzado solo están disponibles con travelpayouts")
+        if any(d.kind == DealKind.self_transfer for d in deals):
+            warnings.insert(0, SELF_TRANSFER_WARNING)
 
         filtered = [d for d in dedupe(deals) if matches(d, params)]
         self._annotate(filtered, params)
@@ -284,7 +417,7 @@ class FlightDealsService:
             for d in deals:
                 d.depart_shift = _shift(p.depart_window, d.departure_date)
                 d.return_shift = _shift(p.return_window, d.return_date) if d.return_date else None
-        if not (flex or p.uses_split):
+        if not (flex or p.uses_split or p.mode == SearchMode.advanced):
             return
         reference: dict[str, float] = {}
         for d in deals:

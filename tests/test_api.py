@@ -412,3 +412,70 @@ def test_calendar_round_trip_grid_cheapest_per_cell(rec):
 def test_calendar_requires_depart_dates(client):
     r = client.get("/calendar", params={"origin": "MAD"})
     assert r.status_code == 422 and "fechas de ida" in r.text
+
+
+# --- Fase 3: modo avanzado (dos vuelos enlazados por cuenta propia) ------------------------
+
+# (origen, destino, día, hora, precio, duración, escalas, aeropuerto salida, aeropuerto llegada)
+ADV_LEGS = [
+    ("STO", "BCN", 20, 7, 300, 240, 0, "ARN", "BCN"),    # directo caro: referencia
+    ("STO", "MIL", 20, 6, 40, 180, 0, "ARN", "MXP"),     # llega 09:00
+    ("MIL", "BCN", 20, 10, 10, 95, 0, "MXP", "BCN"),     # 1 h de margen: no da tiempo
+    ("MIL", "BCN", 20, 15, 30, 95, 0, "BGY", "BCN"),     # 6 h, cambio de aeropuerto
+    ("STO", "BER", 20, 8, 20, 120, 0, "ARN", "BER"),     # llega 10:00
+    ("BER", "BCN", 22, 9, 25, 150, 0, "BER", "BCN"),     # 2 noches en Berlín
+]
+
+
+def adv_handler(rec):
+    def handler(request: httpx.Request):
+        url = str(request.url)
+        if "cities.json" in url:
+            return httpx.Response(200, json=CITIES)
+        if "prices_for_dates" in url:
+            o, d = request.url.params.get("origin"), request.url.params.get("destination")
+            data = [{"origin": a, "destination": b, "origin_airport": oa, "destination_airport": da,
+                     "price": p, "airline": f"A{i}", "flight_number": 100 + i, "transfers": s,
+                     "departure_at": f"{D(day)}T{hour:02d}:00:00+01:00", "duration_to": dur,
+                     "link": f"/search/{a}{b}?t={i}"}
+                    for i, (a, b, day, hour, p, dur, s, oa, da) in enumerate(ADV_LEGS)
+                    if (not o or a == o) and (not d or b == d)]
+            return httpx.Response(200, json={"success": True, "data": data, "currency": "eur"})
+        return rec(request)
+    return handler
+
+
+ADV = {"origin": "STO", "destination": "BCN", "depart_from": D(20), "mode": "advanced"}
+
+
+def test_advanced_links_two_flights(rec):
+    with tp_client(adv_handler(rec)) as c:
+        body = c.get("/deals", params=ADV).json()
+    app.state.service = None
+    res = body["results"]
+    best = res[0]
+    assert best["kind"] == "self_transfer" and best["layover_city"] == "MIL" and best["price"] == 70
+    assert best["layover_hours"] == 6.0 and best["airport_change"] is True and best["stopover_type"] == "connection"
+    assert best["savings_vs_exact"] == 230 and len(best["legs"]) == 2
+    assert not any(d.get("layover_city") == "MIL" and d["price"] == 50 for d in res)   # 1 h: descartado
+    assert not any(d.get("layover_city") == "BER" for d in res)                        # 2 noches > 1
+    assert any(d["kind"] == "one_way" and d["price"] == 300 for d in res)              # el directo sigue
+    assert "protección" in body["warnings"][0]
+
+
+def test_advanced_layover_days_and_stopover_cost(rec):
+    with tp_client(adv_handler(rec)) as c:
+        body = c.get("/deals", params=ADV | {"max_layover_days": 2, "stopover_cost_per_night": 40}).json()
+    app.state.service = None
+    ber = next(d for d in body["results"] if d.get("layover_city") == "BER")
+    assert ber["price"] == 45 and ber["estimated_total"] == 125 and ber["stopover_type"] == "stopover"
+    assert body["results"][0]["layover_city"] == "MIL"    # 70 < 125 al contar el alojamiento
+
+
+def test_advanced_no_airport_change_and_validation(rec, client):
+    with tp_client(adv_handler(rec)) as c:
+        res = c.get("/deals", params=ADV | {"allow_airport_change": False}).json()["results"]
+    app.state.service = None
+    assert all(d["kind"] != "self_transfer" for d in res)
+    assert client.get("/deals", params={"origin": "STO", "depart_from": D(20), "mode": "advanced"}).status_code == 422
+    assert client.get("/deals", params=ADV | {"return_from": D(25)}).status_code == 422
