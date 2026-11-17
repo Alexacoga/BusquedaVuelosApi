@@ -1,132 +1,201 @@
 # BusquedaVuelosApi ✈️
 
-API REST (FastAPI) que busca **ofertas de vuelos desde un origen a cualquier destino**
-(o a uno concreto), con rangos opcionales de fechas de ida y/o vuelta, rango de precio,
-duración de la estancia y solo vuelos directos.
+API REST en Python (FastAPI) que busca **ofertas de vuelos desde un origen a cualquier destino**
+(o a uno concreto), con rangos opcionales de fechas de ida y vuelta, precio, noches de estancia
+y solo vuelos directos. Devuelve los resultados unificados y ordenados por precio.
 
-Combina dos fuentes de datos y devuelve los resultados unificados y ordenados por precio:
+---
 
-| Fuente | Qué es | Coste | Notas |
-|---|---|---|---|
-| `travelpayouts` | Aviasales Data API | Gratis | Precios cacheados (encontrados por usuarios en los últimos 2-7 días). Ideal para "a cualquier sitio". Rangos de fechas por meses. |
-| `google_flights` | SerpApi → Google Travel Explore (datos de Google Flights) | 250 búsquedas/mes gratis | Precios de Google. Solo los próximos 6 meses. 1 consulta por mes del rango de ida. |
+## 1. Qué hace y por qué existe
 
-Basta con configurar **una** de las dos. Si hay ambas, se consultan en paralelo; si una falla,
-la respuesta sigue con la otra y lo indica en `warnings`.
+Los buscadores de vuelos (Google Flights, Skyscanner…) están pensados para una ruta concreta.
+Esta API resuelve otra pregunta: **"¿adónde puedo volar barato desde X en estas fechas?"**,
+devolviendo una lista de destinos ordenada por precio y filtrable, lista para consumir desde
+un script, una app o un sistema de alertas.
 
-> Google no tiene API pública de vuelos (QPX Express cerró en 2018) y Amadeus cerró su
-> portal gratuito *Self-Service* el 17/07/2026, por eso se usan estas dos.
+Es la base para:
+- Explorar destinos baratos ("a cualquier sitio") en un rango de fechas.
+- Comparar rápido varias fechas de ida y vuelta flexibles.
+- Construir encima **alertas de precio** (consultar a diario y avisar cuando un destino baja de un umbral).
 
-## Puesta en marcha
+## 2. Fuentes de datos y por qué hace falta un token
+
+La API **no tiene datos propios**: los obtiene de proveedores externos, que exigen identificarse
+con una clave (token) para controlar el uso de su servicio.
+
+| Fuente | Estado | Qué es | Coste | Clave |
+|---|---|---|---|---|
+| `travelpayouts` | **En uso** | Aviasales Data API | Gratis | `TRAVELPAYOUTS_TOKEN` |
+| `google_flights` | Opcional, **no activado** | SerpApi → Google Travel Explore | 250 búsquedas/mes gratis | `SERPAPI_API_KEY` |
+
+### Travelpayouts (la fuente principal)
+- **Por qué el token**: Travelpayouts solo sirve su Data API a afiliados registrados. Sin token, la
+  API responde `401` y no hay resultados. Con el token vacío, la API arranca pero `/deals`
+  responde `503` ("no hay proveedores configurados").
+- **Cómo se envía**: en la cabecera HTTP `X-Access-Token` (no en la URL), para que no quede
+  escrito en logs, historiales ni en la clave de la caché.
+- **Cómo funciona**: devuelve **los precios más baratos que otros usuarios de Aviasales han
+  encontrado en los últimos días**. No es una búsqueda en tiempo real:
+  - ✅ Muy rápido, gratis, sin límite mensual, y permite "cualquier destino".
+  - ⚠️ Los precios son orientativos: hay que confirmarlos en el enlace (`link`).
+  - ⚠️ Rutas poco buscadas (p. ej. BCN → Vietnam o Kirguistán a meses vista) pueden no tener datos.
+    No significa que no haya vuelos, sino que nadie los ha buscado recientemente.
+  - ⚠️ Algunos códigos IATA no los reconoce (p. ej. `FRU`, Biskek). En ese caso la API responde
+    `200` con 0 resultados y el motivo en `warnings`.
+- **Alta**: travelpayouts.com → unirse al programa *Aviasales* → *Herramientas → API*.
+
+### SerpApi / Google Flights (opcional, sin usar)
+El código está preparado pero desactivado mientras `SERPAPI_API_KEY` esté vacío. Daría precios de
+Google en tiempo casi real (solo próximos 6 meses), pero el registro pide número de teléfono y tiene
+cuota mensual, por eso no se usa.
+
+### Seguridad del token
+- Va en `.env`, que está en `.gitignore`: **nunca se sube a git**. Usa `.env.example` como plantilla.
+- Si la carpeta está en OneDrive/Dropbox, ten en cuenta que `.env` **sí se sincroniza en la nube**.
+- Si el token se expone, regenéralo en el panel de Travelpayouts y actualiza `.env`.
+- La API no tiene autenticación propia: déjala en `localhost`. Si la expones a una red, cualquiera
+  podría usarla (y consumir tu token).
+
+## 3. Puesta en marcha
+
+Requisitos: Python 3.11+.
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+# Windows:  .venv\Scripts\activate     Linux/macOS:  source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # y pon tu TRAVELPAYOUTS_TOKEN y/o SERPAPI_API_KEY
-uvicorn app.main:app --reload
+cp .env.example .env          # y rellena TRAVELPAYOUTS_TOKEN
+uvicorn app.main:app --port 8000
 ```
 
-Documentación interactiva (para probar desde el navegador): <http://localhost:8000/docs>
+- Comprobación: `curl localhost:8000/health` → `{"status":"ok","providers":["travelpayouts"]}`
+- Documentación interactiva: <http://localhost:8000/docs>
 
-Con Docker:
+Con Docker (se ejecuta como usuario sin privilegios):
 
 ```bash
 docker build -t flight-deals .
 docker run -p 8000:8000 --env-file .env flight-deals
 ```
 
-### Conseguir las claves
-- **Travelpayouts**: regístrate en travelpayouts.com, únete al programa *Aviasales* y copia el token
-  en *Herramientas → API*. El acceso a la Data API es inmediato.
-- **SerpApi**: regístrate en serpapi.com; la clave está en el panel (plan gratuito de 250 búsquedas/mes).
+### Variables de entorno (`.env`)
 
-## Uso: `GET /deals`
+| Variable | Defecto | Uso |
+|---|---|---|
+| `TRAVELPAYOUTS_TOKEN` | — | Token de la Data API (obligatorio para usar Travelpayouts) |
+| `TRAVELPAYOUTS_MARKET` | `es` | Mercado de Aviasales |
+| `TRAVELPAYOUTS_MARKER` | — | Marker de afiliado, se añade a los enlaces |
+| `SERPAPI_API_KEY` | — | Activa Google Flights vía SerpApi (opcional) |
+| `DEFAULT_CURRENCY` | `EUR` | Moneda por defecto |
+| `LANGUAGE` / `COUNTRY` | `es` | Idioma de nombres de ciudad / país para Google |
+| `CACHE_TTL_SECONDS` | `21600` (6 h) | Tiempo que se guardan en memoria las respuestas |
+| `HTTP_TIMEOUT_SECONDS` | `30` | Timeout de las llamadas a proveedores |
+
+## 4. Uso: `GET /deals`
 
 | Parámetro | Obligatorio | Descripción |
 |---|---|---|
-| `origin` | ✅ | IATA de salida (ciudad o aeropuerto): `MAD`, `BCN`, `SVQ`… |
+| `origin` | ✅ | IATA de salida (ciudad o aeropuerto): `MAD`, `BCN`… |
 | `destination` | | IATA de destino. **Vacío = cualquier destino** |
-| `depart_from`, `depart_to` | | Rango de fechas de ida (`YYYY-MM-DD`). Solo `depart_from` = ese día exacto. Solo `depart_to` = desde hoy hasta esa fecha |
+| `depart_from`, `depart_to` | | Rango de ida (`YYYY-MM-DD`). Solo `depart_from` = ese día exacto. Solo `depart_to` = desde hoy |
 | `return_from`, `return_to` | | Rango de vuelta. Si se indica, la búsqueda es de ida y vuelta |
-| `trip_type` | | `auto` (por defecto), `one_way`, `round_trip` |
-| `min_price`, `max_price` | | Rango de precio (total del billete) |
+| `trip_type` | | `auto` (defecto), `one_way`, `round_trip` |
+| `min_price`, `max_price` | | Rango de precio total |
 | `min_nights`, `max_nights` | | Duración de la estancia (implica ida y vuelta) |
-| `direct_only` | | `true` = solo vuelos sin escalas |
+| `direct_only` | | `true` = solo sin escalas |
 | `currency` | | `EUR` por defecto |
-| `sources` | | `travelpayouts` y/o `google_flights` (repetible). Vacío = todas las configuradas |
+| `sources` | | `travelpayouts` y/o `google_flights`. Vacío = todas las configuradas |
 | `group_by_destination` | | `true` = solo la oferta más barata de cada destino |
 | `limit` | | Máx. resultados (1-500, defecto 50) |
 
 ### Ejemplos
 
 ```bash
-# Lo más barato desde Madrid a cualquier sitio, saliendo en diciembre, por menos de 80 €
+# Desde Barcelona a cualquier sitio, ida 18-22 y vuelta 27-31 de marzo, lo más barato por destino
+curl "localhost:8000/deals?origin=BCN&depart_from=2027-03-18&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-31&group_by_destination=true"
+
+# Desde Madrid, salidas en diciembre por menos de 80 €
 curl "localhost:8000/deals?origin=MAD&depart_from=2026-12-01&depart_to=2026-12-31&max_price=80&group_by_destination=true"
 
-# Escapada desde Barcelona: ida un viernes de enero, 2-4 noches, directo
+# Escapada: 2-4 noches, solo directos
 curl "localhost:8000/deals?origin=BCN&depart_from=2027-01-08&depart_to=2027-01-30&min_nights=2&max_nights=4&direct_only=true"
-
-# Madrid → Lisboa con rangos de ida y vuelta
-curl "localhost:8000/deals?origin=MAD&destination=LIS&depart_from=2027-02-10&depart_to=2027-02-15&return_from=2027-02-16&return_to=2027-02-22"
-
-# Solo ida, solo Google Flights
-curl "localhost:8000/deals?origin=VLC&depart_from=2027-03-01&depart_to=2027-03-20&trip_type=one_way&sources=google_flights"
 ```
+
+> Consejo: con fechas exactas suele haber pocos resultados (los datos son de búsquedas de otros
+> usuarios). Deja ±2-3 días de margen para ver muchos más destinos.
 
 ### Respuesta
 
 ```json
 {
-  "query": { "origin": "MAD", "depart_from": "2026-12-01", "...": "..." },
-  "count": 2,
-  "sources_used": ["travelpayouts", "google_flights"],
+  "query": { "origin": "BCN", "...": "..." },
+  "count": 1,
+  "sources_used": ["travelpayouts"],
   "warnings": [],
-  "results": [
-    {
-      "source": "travelpayouts",
-      "origin": "MAD", "destination": "BCN", "destination_name": "Barcelona", "destination_country": "ES",
-      "departure_date": "2026-12-05", "return_date": "2026-12-08", "nights": 3,
-      "price": 35.0, "currency": "EUR",
-      "airline": "VY", "flight_number": "VY1002", "stops": 0, "return_stops": 0,
-      "duration_minutes": 75,
-      "link": "https://www.aviasales.com/search/MAD0512BCN08121"
-    }
-  ]
+  "results": [{
+    "source": "travelpayouts", "origin": "BCN", "destination": "LIS",
+    "destination_name": "Lisboa", "destination_country": "PT",
+    "departure_date": "2027-03-22", "return_date": "2027-03-27", "nights": 5,
+    "price": 95.0, "currency": "EUR", "airline": "U2", "stops": 0,
+    "link": "https://www.aviasales.com/search/..."
+  }]
 }
 ```
 
-Códigos de error: `422` parámetros no válidos (con el motivo), `503` ninguna fuente configurada,
-`502` todas las fuentes fallaron.
+### Códigos de respuesta
 
-## Cosas a tener en cuenta
-- **Los precios son orientativos**: Travelpayouts usa caché de búsquedas recientes y Google Explore
-  muestra el "desde". Confirma siempre en el enlace (`link`) antes de comprar.
-- **Cuota de SerpApi**: cada mes del rango de ida cuesta 1 búsqueda. Las respuestas se guardan en
-  caché 6 h (`CACHE_TTL_SECONDS`) para no repetir consultas.
-- **Travelpayouts** limita a 12 combinaciones mes-ida × mes-vuelta por búsqueda; si te pasas, acorta el rango.
-- Usa códigos IATA de **ciudad** (`LON`, `PAR`, `MIL`) para cubrir todos sus aeropuertos en Travelpayouts.
+| Código | Cuándo |
+|---|---|
+| `200` | Búsqueda correcta (puede tener 0 resultados; los motivos van en `warnings`) |
+| `422` | Parámetros no válidos (fechas pasadas, rangos invertidos, IATA mal escrito…) |
+| `502` | Todas las fuentes fallaron (token inválido, red caída, error del proveedor) |
+| `503` | No hay ninguna fuente configurada |
 
-## Tests
+## 5. Cómo funciona por dentro
+
+```
+GET /deals
+  └─ main.py        valida parámetros (models.SearchParams) → 422 si algo está mal
+      └─ service.py  lanza en paralelo todos los proveedores activos
+          ├─ providers/travelpayouts.py  1 llamada por combinación mes-ida × mes-vuelta (máx. 12)
+          └─ providers/serpapi.py        1 llamada por mes de ida (máx. 6 meses)
+              └─ providers/base.py       GET con caché, 1 reintento ante 429/5xx/red,
+                                         clasifica errores (consulta rechazada vs fallo real)
+      ← service.py   unifica, deduplica, filtra (fechas, precio, noches, escalas),
+                     agrupa por destino si se pide y ordena por precio
+```
+
+| Archivo | Responsabilidad |
+|---|---|
+| `app/main.py` | Endpoints `/health` y `/deals`, ciclo de vida del cliente HTTP, mapeo de errores a códigos HTTP |
+| `app/models.py` | `SearchParams` (parámetros y validación), `Deal` (oferta), `SearchResponse`, ventanas de fechas |
+| `app/service.py` | Orquesta proveedores; errores de un proveedor se convierten en `warnings` sin tumbar la respuesta |
+| `app/cache.py` | Caché en memoria con caducidad (TTL) y tamaño máximo. **Se pierde al reiniciar** |
+| `app/config.py` | Lee `.env` / variables de entorno sin dependencias externas |
+| `app/providers/base.py` | Clase base `Provider`, GET con caché y reintento, `ProviderError` / `ProviderQueryError` |
+| `app/providers/travelpayouts.py` | Construye consultas a Aviasales v3, traduce resultados a `Deal`, añade nombres de ciudad |
+| `app/providers/serpapi.py` | Construye consultas a Google Travel Explore (opcional) |
+| `tests/test_api.py` | 17 tests con respuestas simuladas: no usan red ni claves |
+
+### Tipos de error de proveedor
+- `ProviderQueryError` (HTTP 400): el proveedor funciona pero no acepta la consulta (p. ej. IATA
+  desconocido). Resultado: `200` con 0 resultados y aviso.
+- `ProviderError` (401, 5xx, red, JSON inválido): fallo real. Si fallan todas las fuentes, `502`.
+
+## 6. Tests
 
 ```bash
 pytest -q
 ```
 
-Usan respuestas simuladas, así que no gastan cuota ni necesitan claves.
+Cubren búsqueda con rangos, filtros de precio/escalas/noches, agrupación por destino, validaciones,
+caché, fallo de un proveedor, consulta rechazada, token en cabecera y reintento ante errores
+transitorios.
 
-## Estructura
-
-```
-app/
-  main.py             # endpoints FastAPI
-  models.py           # parámetros, validación y modelo de oferta
-  service.py          # combina fuentes, filtra, deduplica y ordena
-  cache.py            # caché en memoria con caducidad
-  providers/
-    travelpayouts.py  # Aviasales Data API
-    serpapi.py        # Google Travel Explore vía SerpApi
-tests/test_api.py
-```
-
-Para añadir otra fuente (p. ej. Duffel, Kiwi, un scraper de Google Flights como `fast-flights`),
-crea una clase que herede de `Provider` en `app/providers/` y añádela en `build_service()` de `main.py`.
+## 7. Limitaciones conocidas y próximos pasos
+- Los precios de Travelpayouts son de búsquedas recientes de otros usuarios, no en tiempo real.
+- La caché es solo en memoria: no hay histórico de precios.
+- **Siguiente objetivo**: alertas de precio (consulta diaria + histórico persistente + aviso cuando
+  un destino baje de un umbral).
+- Para añadir otra fuente, crea una clase que herede de `Provider` en `app/providers/` y añádela en
+  `build_service()` de `app/main.py`.

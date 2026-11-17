@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 
 from app.models import Deal, SearchParams, SearchResponse
-from app.providers.base import Provider, ProviderError
+from app.providers.base import Provider, ProviderError, ProviderQueryError
 
 
 class NoProvidersError(Exception):
@@ -72,6 +72,11 @@ class FlightDealsService:
         deals: list[Deal] = []
         used: list[str] = []
         for provider, res in zip(chosen, results):
+            if isinstance(res, ProviderQueryError):
+                # El proveedor funciona pero no acepta esta consulta: sin resultados, con aviso.
+                used.append(provider.name)
+                warnings.append(str(res))
+                continue
             if isinstance(res, ProviderError):
                 warnings.append(str(res))
                 continue

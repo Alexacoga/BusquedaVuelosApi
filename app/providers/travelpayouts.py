@@ -58,8 +58,9 @@ class TravelpayoutsProvider(Provider):
             "sorting": "price",
             "unique": "false",
             "limit": 1000,
-            "token": self.settings.travelpayouts_token,
         }
+        # El token va en cabecera, no en la URL: así no aparece en logs ni en la clave de caché.
+        headers = {"X-Access-Token": self.settings.travelpayouts_token}
         if params.destination:
             base["destination"] = params.destination
 
@@ -70,13 +71,14 @@ class TravelpayoutsProvider(Provider):
                 q["departure_at"] = dep
             if ret:
                 q["return_at"] = ret
-            calls.append(self._get_json(f"{BASE}/aviasales/v3/prices_for_dates", q))
+            calls.append(self._get_json(f"{BASE}/aviasales/v3/prices_for_dates", q, headers))
 
         payloads, names = await asyncio.gather(asyncio.gather(*calls), self._load_city_names())
         deals: list[Deal] = []
         for payload in payloads:
-            if isinstance(payload, dict) and payload.get("success") is False:
-                raise ProviderError(f"{self.name}: {payload.get('error') or 'respuesta no válida'}")
+            if not isinstance(payload, dict) or payload.get("success") is False:
+                err = payload.get("error") if isinstance(payload, dict) else None
+                raise ProviderError(f"{self.name}: {err or 'respuesta no válida'}")
             currency = (payload.get("currency") or params.currency).upper()
             for item in payload.get("data") or []:
                 deal = self._to_deal(item, currency, params, names)

@@ -168,6 +168,64 @@ def test_provider_failure_is_a_warning(rec):
     assert body["sources_used"] == ["travelpayouts"] and "HTTP 401" in body["warnings"][0]
 
 
+def test_rejected_query_is_empty_result_not_error(rec):
+    def unknown_code(request):
+        if "travelpayouts" in str(request.url) and request.url.params.get("destination") == "FRU":
+            return httpx.Response(400, json={"error": "bad request: unknown location code `FRU`",
+                                             "success": False})
+        return rec(request)
+    s = replace(get_settings(), travelpayouts_token="tok", serpapi_api_key=None)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(unknown_code))
+    app.state.service = FlightDealsService([TravelpayoutsProvider(client, TTLCache(0), s),
+                                            SerpApiProvider(client, TTLCache(0), s)])
+    with TestClient(app) as c:
+        r = c.get("/deals", params={"origin": "BCN", "destination": "FRU", "depart_from": D(5)})
+    app.state.service = None
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 0 and body["sources_used"] == ["travelpayouts"]
+    assert "unknown location code" in body["warnings"][0]
+
+
+def test_auth_failure_still_502(rec):
+    s = replace(get_settings(), travelpayouts_token="bad", serpapi_api_key=None)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(401, text="Unauthorized")))
+    app.state.service = FlightDealsService([TravelpayoutsProvider(client, TTLCache(0), s),
+                                            SerpApiProvider(client, TTLCache(0), s)])
+    with TestClient(app) as c:
+        r = c.get("/deals", params={"origin": "MAD"})
+    app.state.service = None
+    assert r.status_code == 502
+
+
+def test_token_sent_in_header_not_url(client, rec):
+    client.get("/deals", params={"origin": "MAD", "sources": "travelpayouts"})
+    tp_calls = [c for c in rec.calls if "prices_for_dates" in str(c.url)]
+    assert tp_calls and all("token" not in c.url.params for c in tp_calls)
+    assert all(c.headers.get("X-Access-Token") == "tok" for c in tp_calls)
+
+
+def test_transient_error_is_retried(rec, monkeypatch):
+    import app.providers.base as base
+    monkeypatch.setattr(base, "RETRY_DELAY_SECONDS", 0)
+    hits = {"n": 0}
+
+    def flaky(request):
+        if "prices_for_dates" in str(request.url):
+            hits["n"] += 1
+            if hits["n"] == 1:
+                return httpx.Response(503)
+        return rec(request)
+    s = replace(get_settings(), travelpayouts_token="tok", serpapi_api_key=None)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(flaky))
+    app.state.service = FlightDealsService([TravelpayoutsProvider(client, TTLCache(0), s),
+                                            SerpApiProvider(client, TTLCache(0), s)])
+    with TestClient(app) as c:
+        r = c.get("/deals", params={"origin": "MAD", "destination": "BCN", "depart_from": D(10)})
+    app.state.service = None
+    assert r.status_code == 200 and r.json()["count"] >= 1 and hits["n"] == 2
+
+
 def test_cache_avoids_repeat_calls(client, rec):
     q = {"origin": "MAD", "depart_from": D(9), "depart_to": D(21), "sources": "google_flights"}
     client.get("/deals", params=q)

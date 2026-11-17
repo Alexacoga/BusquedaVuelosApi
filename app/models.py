@@ -40,7 +40,6 @@ def make_window(start: date | None, end: date | None) -> DateWindow | None:
     if start is None:  # solo "hasta": desde hoy hasta esa fecha
         start = date.today()
     if end is None:    # solo "desde": ese día exacto
-
         end = start
     return DateWindow(start=start, end=end)
 

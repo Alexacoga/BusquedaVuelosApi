@@ -29,8 +29,12 @@ class TTLCache:
     def set(self, key: str, value: Any) -> None:
         if self.ttl <= 0:
             return
+        now = time.monotonic()
         if len(self._data) >= self.max_items:
-            # descarta la entrada que caduca antes
-            oldest = min(self._data, key=lambda k: self._data[k][0])
-            self._data.pop(oldest, None)
-        self._data[key] = (time.monotonic() + self.ttl, value)
+            # primero limpia lo caducado; si sigue lleno, descarta la entrada que caduca antes
+            for k in [k for k, (exp, _) in self._data.items() if exp < now]:
+                del self._data[k]
+            if len(self._data) >= self.max_items:
+                oldest = min(self._data, key=lambda k: self._data[k][0])
+                del self._data[oldest]
+        self._data[key] = (now + self.ttl, value)
