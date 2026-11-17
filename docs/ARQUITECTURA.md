@@ -8,7 +8,7 @@ del contrato. El contrato completo y exacto está en [`openapi.json`](openapi.js
 
 ```mermaid
 flowchart LR
-    C([Cliente]) -->|GET /health · /deals · /calendar| M[main.py<br/>validación SearchParams]
+    C([Cliente]) -->|GET / · /health · /deals · /calendar| M[main.py<br/>validación SearchParams]
     M -->|422 si no es válido| C
     M --> S[service.py<br/>FlightDealsService]
     S --> TP[TravelpayoutsProvider]
@@ -158,9 +158,18 @@ Todas pasan por la caché (6 h), así que repetir una búsqueda parecida no vuel
 
 | Método y ruta | Respuesta 200 | Errores |
 |---|---|---|
+| `GET /` | Presentación en inglés: qué hace, fuente de datos, endpoints, ejemplos y fuentes activas | — |
 | `GET /health` | `HealthResponse {status, providers[]}` | — |
 | `GET /deals` | `SearchResponse` | 422, 502, 503 |
 | `GET /calendar` | `CalendarResponse` (necesita fechas de ida) | 422, 502, 503 |
+
+**`/deals` frente a `/calendar`:** aceptan los mismos parámetros y hacen la misma búsqueda.
+`/deals` devuelve una lista de ofertas ordenada (`sort`, `limit`, `group_by_destination`) y
+`alternatives` si no hay resultados. `/calendar` devuelve una celda por fecha (o par de fechas) con
+el precio más barato, `price_level`, `stats` y `grid`, y necesita fechas de ida.
+
+Las descripciones completas, las llamadas de ejemplo y las respuestas de ejemplo están en el
+contrato: `/docs` y `docs/openapi.json` (textos en `app/openapi_docs.py`).
 
 ### Parámetros de `/deals` y `/calendar` (query string)
 

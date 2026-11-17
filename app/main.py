@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from app.cache import TTLCache
 from app.config import get_settings
+from app import openapi_docs as doc
 from app.models import (MAX_FLEX_DAYS, MAX_LAYOVER_DAYS, CalendarResponse, HealthResponse,
                         ProviderErrorResponse, SearchMode, SearchParams, SearchResponse, SortBy, TripType,
                         ValidationErrorResponse)
@@ -52,8 +53,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Flight Deals API",
-    version="1.2.0",
-    description="Busca ofertas de vuelos desde un origen a cualquier destino, con rangos de fechas y precio.",
+    version=doc.VERSION,
+    summary="Ofertas de vuelos baratos con datos de la Aviasales Data API (Travelpayouts)",
+    description=doc.API_DESCRIPTION,
+    openapi_tags=doc.TAGS,
     lifespan=lifespan,
 )
 
@@ -69,19 +72,25 @@ def _validation_error(exc: ValidationError) -> HTTPException:
 
 
 def search_params(
-    origin: Annotated[str, Query(description="IATA de salida (ciudad o aeropuerto), p. ej. MAD")],
-    destination: Annotated[str | None, Query(description="IATA de destino. Vacío = cualquier destino")] = None,
-    depart_from: Annotated[date | None, Query(description="Ida desde (YYYY-MM-DD). Solo esta = día exacto")] = None,
-    depart_to: Annotated[date | None, Query(description="Ida hasta (YYYY-MM-DD)")] = None,
-    return_from: Annotated[date | None, Query(description="Vuelta desde. Si hay vuelta, se busca ida y vuelta")] = None,
-    return_to: Annotated[date | None, Query(description="Vuelta hasta")] = None,
-    trip_type: Annotated[TripType, Query(description="auto | one_way | round_trip")] = TripType.auto,
-    min_price: Annotated[float | None, Query(ge=0)] = None,
-    max_price: Annotated[float | None, Query(ge=0)] = None,
+    origin: Annotated[str, Query(description="IATA de salida (ciudad o aeropuerto), p. ej. MAD",
+                                 examples=["BCN"])],
+    destination: Annotated[str | None, Query(description="IATA de destino. Vacío = cualquier destino",
+                                             examples=["LIS"])] = None,
+    depart_from: Annotated[date | None, Query(description="Ida desde (YYYY-MM-DD). Solo esta = día exacto",
+                                              examples=["2027-03-20"])] = None,
+    depart_to: Annotated[date | None, Query(description="Ida hasta (YYYY-MM-DD)", examples=["2027-03-22"])] = None,
+    return_from: Annotated[date | None, Query(description="Vuelta desde. Si hay vuelta, se busca ida y vuelta",
+                                              examples=["2027-03-27"])] = None,
+    return_to: Annotated[date | None, Query(description="Vuelta hasta", examples=["2027-03-29"])] = None,
+    trip_type: Annotated[TripType, Query(description="auto (ida y vuelta si hay fechas de vuelta o noches) | "
+                                                     "one_way | round_trip")] = TripType.auto,
+    min_price: Annotated[float | None, Query(ge=0, description="Precio total mínimo")] = None,
+    max_price: Annotated[float | None, Query(ge=0, description="Precio total máximo", examples=[150])] = None,
     min_nights: Annotated[int | None, Query(ge=0, description="Estancia mínima (ida y vuelta)")] = None,
     max_nights: Annotated[int | None, Query(ge=0, description="Estancia máxima (ida y vuelta)")] = None,
-    direct_only: bool = False,
-    currency: str | None = None,
+    direct_only: Annotated[bool, Query(description="Solo vuelos sin escalas (en cada tramo)")] = False,
+    currency: Annotated[str | None, Query(description="Moneda ISO (EUR, USD…). Vacío = DEFAULT_CURRENCY del "
+                                                      "servidor", examples=["EUR"])] = None,
     sources: Annotated[list[str] | None, Query(description="travelpayouts y/o google_flights. Vacío = todos")] = None,
     group_by_destination: Annotated[bool, Query(description="Solo la mejor oferta por destino")] = False,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -137,7 +146,17 @@ def search_params(
         raise _validation_error(exc)
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/", tags=["Información"], summary="API overview (English)",
+         description="What this API does, where its data comes from, its endpoints and example calls. "
+                     "`providers` lists the data sources configured on this server.",
+         responses={200: doc.ok_examples({"overview": {"summary": "API overview",
+                                                       "value": doc.ROOT_EXAMPLE}})})
+def root(service: Annotated[FlightDealsService, Depends(get_service)]) -> dict:
+    return {**doc.ROOT_INFO, "providers": service.available()}
+
+
+@app.get("/health", response_model=HealthResponse, tags=["Información"], summary="Estado del servicio",
+         description=doc.HEALTH_DESCRIPTION)
 def health(service: Annotated[FlightDealsService, Depends(get_service)]):
     return {"status": "ok", "providers": service.available()}
 
@@ -152,23 +171,23 @@ async def _run(coro):
     return result
 
 
-@app.get("/deals", response_model=SearchResponse, response_model_exclude_none=True, responses=ERROR_RESPONSES)
+@app.get("/deals", response_model=SearchResponse, response_model_exclude_none=True, tags=["Ofertas"],
+         summary="Lista de ofertas", description=doc.DEALS_DESCRIPTION,
+         responses={200: doc.ok_examples(doc.DEALS_EXAMPLES), **ERROR_RESPONSES})
 async def deals(
     service: Annotated[FlightDealsService, Depends(get_service)],
     params: Annotated[SearchParams, Depends(search_params)],
 ):
-    """Ofertas ordenadas según `sort`."""
     return await _run(service.search(params))
 
 
-@app.get("/calendar", response_model=CalendarResponse, response_model_exclude_none=True,
-         responses=ERROR_RESPONSES)
+@app.get("/calendar", response_model=CalendarResponse, response_model_exclude_none=True, tags=["Ofertas"],
+         summary="Calendario de precios por día", description=doc.CALENDAR_DESCRIPTION,
+         responses={200: doc.ok_examples(doc.CALENDAR_EXAMPLES), **ERROR_RESPONSES})
 async def calendar(
     service: Annotated[FlightDealsService, Depends(get_service)],
     params: Annotated[SearchParams, Depends(search_params)],
 ):
-    """Precio más barato por día de ida (y de vuelta). Acepta los mismos parámetros que /deals;
-    `limit`, `sort` y `group_by_destination` no se usan. Requiere fechas de ida."""
     if params.depart_window is None:
         raise HTTPException(status_code=422, detail=[
             {"field": "depart_from", "error": "/calendar necesita fechas de ida (depart_from y/o depart_to)"}])

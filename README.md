@@ -69,7 +69,10 @@ uvicorn app.main:app --port 8000
 ```
 
 - Comprobación: `curl localhost:8000/health` → `{"status":"ok","providers":["travelpayouts"]}`
-- Documentación interactiva: <http://localhost:8000/docs>
+- Presentación de la API en inglés (qué hace, fuente de datos, endpoints y ejemplos): `curl localhost:8000/`
+- Documentación interactiva: <http://localhost:8000/docs> (Swagger) o <http://localhost:8000/redoc>.
+  Explica de dónde salen los datos y qué aporta la API, describe cada endpoint, separa las diferencias
+  entre `/deals` y `/calendar`, y trae llamadas y respuestas de ejemplo (desplegable *Examples*)
 
 Con Docker (se ejecuta como usuario sin privilegios):
 
@@ -283,7 +286,8 @@ GET /deals  ·  GET /calendar
 
 | Archivo | Responsabilidad |
 |---|---|
-| `app/main.py` | Endpoints `/health`, `/deals` y `/calendar`; parámetros comunes; mapeo de errores a códigos HTTP |
+| `app/main.py` | Endpoints `/`, `/health`, `/deals` y `/calendar`; parámetros comunes; mapeo de errores a códigos HTTP |
+| `app/openapi_docs.py` | Textos del contrato: descripción de la API, de cada endpoint, presentación en inglés de `/` y respuestas de ejemplo |
 | `app/models.py` | `SearchParams` (parámetros y validación), `Deal`, `Leg` (tramo), `SearchResponse`, `CalendarResponse`, ventanas de fechas con flexibilidad |
 | `app/service.py` | Orquesta proveedores, combina billetes (split, open-jaw, self-transfer), filtra, anota ahorro y ordena; los errores de un proveedor se convierten en `warnings` |
 | `app/cache.py` | Caché en memoria con caducidad (TTL) y tamaño máximo. **Se pierde al reiniciar** |
@@ -294,7 +298,7 @@ GET /deals  ·  GET /calendar
 | `docs/ARQUITECTURA.md` | Diagramas de llamadas (Mermaid) y resumen del contrato |
 | `docs/openapi.json` | Contrato OpenAPI 3.1 exportado (`python scripts/export_openapi.py`) |
 | `scripts/export_openapi.py` | Regenera `docs/openapi.json` desde el código |
-| `tests/test_api.py` | 34 tests con respuestas simuladas: no usan red ni claves |
+| `tests/test_api.py` | 36 tests con respuestas simuladas: no usan red ni claves |
 
 ### Tipos de error de proveedor
 - `ProviderQueryError` (HTTP 400): el proveedor funciona pero no acepta la consulta (p. ej. IATA

@@ -522,6 +522,25 @@ def test_openapi_contract_is_up_to_date():
     assert saved == json.loads(json.dumps(app.openapi()))
 
 
+def test_root_overview_in_english(client):
+    body = client.get("/").json()
+    assert body["name"] == "Flight Deals API" and "Travelpayouts" in body["data_source"]["name"]
+    assert "does not sell tickets" in body["description"] and set(body["endpoints"]) >= {"GET /deals", "GET /calendar"}
+    assert body["providers"] == ["travelpayouts", "google_flights"]
+
+
+def test_contract_examples_match_models():
+    """Los ejemplos de respuesta del contrato deben ser válidos según los modelos reales."""
+    from app import openapi_docs as doc
+    from app.models import CalendarResponse, SearchResponse
+    for ex in doc.DEALS_EXAMPLES.values():
+        SearchResponse.model_validate(ex["value"])
+    for ex in doc.CALENDAR_EXAMPLES.values():
+        CalendarResponse.model_validate(ex["value"])
+    for ex in list(doc.DEALS_EXAMPLES.values()) + list(doc.CALENDAR_EXAMPLES.values()):
+        assert ex["description"].startswith("`/")    # cada ejemplo dice qué llamada lo produce
+
+
 def test_alternatives_nearby_dates(client):
     body = client.get("/deals", params={"origin": "MAD", "destination": "BCN", "depart_from": D(9),
                                         "trip_type": "one_way", "sources": "travelpayouts"}).json()

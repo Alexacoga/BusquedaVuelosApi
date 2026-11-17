@@ -2,13 +2,90 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Flight Deals API",
-    "description": "Busca ofertas de vuelos desde un origen a cualquier destino, con rangos de fechas y precio.",
+    "summary": "Ofertas de vuelos baratos con datos de la Aviasales Data API (Travelpayouts)",
+    "description": "\nBusca **ofertas de vuelos baratos** desde un origen a un destino concreto o **a cualquier destino**,\ncon rangos de fechas, filtros de precio, noches y escalas.\n\n### De dónde salen los datos\nEsta API **no vende billetes ni consulta aerolíneas directamente**. Recupera los precios de la\n**[Aviasales Data API de Travelpayouts](https://support.travelpayouts.com/hc/en-us/articles/203956163)** (gratuita, con token), que publica los\nprecios más baratos que han encontrado otros usuarios de Aviasales en los últimos días. Por eso:\n\n- Son precios **orientativos** (caché de 2-7 días en origen): confirma siempre en el enlace `link`.\n- Rutas poco buscadas pueden no tener datos; en ese caso se proponen `alternatives`.\n- Opcionalmente puede usar SerpApi (Google Travel Explore) si se configura `SERPAPI_API_KEY`.\n\n### Qué aporta frente a llamar directamente a Travelpayouts\n- **Una sola llamada** en lugar de una por mes y combinación de fechas: rangos de días, `flex_days`\n  (± días) y ordenación por precio, € por noche, cercanía a tus fechas o duración.\n- **Combinaciones que Travelpayouts no da hechas**: dos billetes de solo ida (`split_tickets`),\n  volver desde otra ciudad (`open_jaw`, `return_origin`) y enlazar dos vuelos por tu cuenta\n  (`mode=advanced`, A→X→B, también en ida y vuelta) con márgenes de conexión y noches de escala.\n- **Calendario de precios** (`/calendar`) para ver qué días salen más baratos.\n- **Alternativas** cuando no hay resultados: fechas cercanas y ciudades cercanas.\n- **El token no sale nunca**: viaja en cabecera hacia Travelpayouts y no aparece en respuestas,\n  URLs ni logs. Caché en memoria (6 h), reintentos y límite de llamadas simultáneas.\n- Nombres de ciudad, país y distancias entre ciudades a partir de los datos públicos de Travelpayouts.\n\n### Endpoints\n| Endpoint | Para qué |\n|---|---|\n| `GET /` | Información de la API en inglés (*API overview in English*) |\n| `GET /health` | Estado y fuentes de datos activas |\n| `GET /deals` | **Lista de ofertas** ordenadas: cada una con fechas, precio y enlace de reserva |\n| `GET /calendar` | **Mapa de precios por día**: el más barato de cada fecha de ida (y vuelta) |\n\n`/deals` y `/calendar` aceptan **los mismos parámetros** y hacen la misma búsqueda; cambian en cómo\ndevuelven el resultado (ver la descripción de cada uno).\n\n### Códigos IATA\nUsa códigos de **ciudad** (`LON`, `PAR`, `MIL`, `ROM`, `STO`) para incluir todos sus aeropuertos, o\nde aeropuerto (`BCN`, `MAD`, `LIS`). Las fechas van en formato `YYYY-MM-DD` y no pueden haber pasado.\n",
     "version": "1.2.0"
   },
   "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "Información"
+        ],
+        "summary": "API overview (English)",
+        "description": "What this API does, where its data comes from, its endpoints and example calls. `providers` lists the data sources configured on this server.",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Root  Get"
+                },
+                "examples": {
+                  "overview": {
+                    "summary": "API overview",
+                    "value": {
+                      "name": "Flight Deals API",
+                      "version": "1.2.0",
+                      "description": "Finds cheap flight deals from an origin to a given destination or to anywhere, with date ranges, flexible dates and price, stay and stops filters. It does not sell tickets: prices come from the Travelpayouts / Aviasales Data API (cheapest fares found by Aviasales users in the last few days), so they are indicative and must be confirmed through each result's booking link.",
+                      "data_source": {
+                        "name": "Travelpayouts / Aviasales Data API",
+                        "docs": "https://support.travelpayouts.com/hc/en-us/articles/203956163"
+                      },
+                      "what_it_adds": [
+                        "One request instead of one per month and date combination; date ranges and +/- flexible days",
+                        "Sorting by price, price per night, closeness to your dates, score or duration",
+                        "Split tickets (two one-way tickets) and open-jaw trips (return from another city)",
+                        "Advanced mode: self-transfer A->X->B with connection margins and layover nights, one-way or round trip",
+                        "Price calendar to see the cheapest days",
+                        "Alternatives (nearby dates and cities) when a search has no results",
+                        "The provider token never leaves the server; in-memory cache, retries and concurrency limits"
+                      ],
+                      "endpoints": {
+                        "GET /": "This overview",
+                        "GET /health": "Service status and active data sources",
+                        "GET /deals": "List of deals sorted by `sort`, each with dates, price and booking link",
+                        "GET /calendar": "Cheapest price per departure (and return) date, as cells and a grid"
+                      },
+                      "examples": [
+                        "/deals?origin=BCN&depart_from=2027-03-20&return_from=2027-03-29&flex_days=2&group_by_destination=true",
+                        "/deals?origin=BCN&destination=LIS&depart_from=2027-03-20&return_from=2027-03-29&split_tickets=true",
+                        "/deals?origin=STO&destination=BCN&depart_from=2027-03-20&mode=advanced",
+                        "/calendar?origin=BCN&destination=LIS&depart_from=2027-03-18&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-31"
+                      ],
+                      "docs": {
+                        "swagger_ui": "/docs",
+                        "redoc": "/redoc",
+                        "openapi": "/openapi.json"
+                      },
+                      "notes": [
+                        "Use city IATA codes (LON, PAR, MIL) to include every airport, or airport codes (BCN, LIS)",
+                        "Dates are YYYY-MM-DD and cannot be in the past",
+                        "Parameter and field descriptions in /docs are in Spanish"
+                      ],
+                      "providers": [
+                        "travelpayouts"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
-        "summary": "Health",
+        "tags": [
+          "Información"
+        ],
+        "summary": "Estado del servicio",
+        "description": "Devuelve `ok` y las fuentes de datos configuradas (p. ej. `travelpayouts`).",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -26,8 +103,11 @@
     },
     "/deals": {
       "get": {
-        "summary": "Deals",
-        "description": "Ofertas ordenadas según `sort`.",
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Lista de ofertas",
+        "description": "Devuelve una **lista de ofertas** (`results`), ordenada según `sort` y recortada a `limit`. Cada\noferta es un viaje concreto: fechas, precio total, aerolínea, escalas y **enlace de reserva**.\n\n**Úsalo para** encontrar adónde ir o el viaje más barato y reservarlo.\n**Diferencia con `/calendar`:** aquí puede haber varias ofertas para el mismo día, se pueden agrupar\npor destino (`group_by_destination`) y, si no hay resultados, se proponen `alternatives`.\n\nTipos de oferta (`kind`): `one_way`, `round_trip`, `split` (dos billetes de solo ida), `open_jaw`\n(vuelta desde otra ciudad) y `self_transfer` (vuelos enlazados por tu cuenta, `mode=advanced`). Las\ncombinaciones traen cada billete en `legs` con su propio enlace.\n\n### Llamadas de ejemplo\n| Qué busca | Llamada |\n|---|---|\n| Cualquier destino, lo más barato por destino | `/deals?origin=BCN&depart_from=2027-03-18&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-31&group_by_destination=true` |\n| Ruta concreta comparando billetes sueltos | `/deals?origin=BCN&destination=LIS&depart_from=2027-03-20&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-29&split_tickets=true` |\n| Fechas ±2 días, más noches por euro | `/deals?origin=BCN&depart_from=2027-03-20&return_from=2027-03-29&flex_days=2&sort=price_per_night` |\n| Ida a Lisboa y vuelta desde Oporto | `/deals?origin=BCN&destination=LIS&depart_from=2027-03-20&return_from=2027-03-29&flex_days=2&return_origin=OPO` |\n| Escapada de 2-4 noches, solo directos, < 100 € | `/deals?origin=MAD&depart_from=2027-01-08&depart_to=2027-01-30&min_nights=2&max_nights=4&direct_only=true&max_price=100` |\n| Enlazar dos vuelos (Estocolmo → ? → Barcelona) | `/deals?origin=STO&destination=BCN&depart_from=2027-03-20&mode=advanced&max_layover_days=1` |\n\n> `mode=advanced` combina billetes independientes: si pierdes el segundo vuelo no hay protección.\n> La respuesta lo avisa en `warnings`.",
         "operationId": "deals_deals_get",
         "parameters": [
           {
@@ -37,6 +117,9 @@
             "schema": {
               "type": "string",
               "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD",
+              "examples": [
+                "BCN"
+              ],
               "title": "Origin"
             },
             "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD"
@@ -55,6 +138,9 @@
                 }
               ],
               "description": "IATA de destino. Vacío = cualquier destino",
+              "examples": [
+                "LIS"
+              ],
               "title": "Destination"
             },
             "description": "IATA de destino. Vacío = cualquier destino"
@@ -74,6 +160,9 @@
                 }
               ],
               "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto",
+              "examples": [
+                "2027-03-20"
+              ],
               "title": "Depart From"
             },
             "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto"
@@ -93,6 +182,9 @@
                 }
               ],
               "description": "Ida hasta (YYYY-MM-DD)",
+              "examples": [
+                "2027-03-22"
+              ],
               "title": "Depart To"
             },
             "description": "Ida hasta (YYYY-MM-DD)"
@@ -112,6 +204,9 @@
                 }
               ],
               "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta",
+              "examples": [
+                "2027-03-27"
+              ],
               "title": "Return From"
             },
             "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta"
@@ -131,6 +226,9 @@
                 }
               ],
               "description": "Vuelta hasta",
+              "examples": [
+                "2027-03-29"
+              ],
               "title": "Return To"
             },
             "description": "Vuelta hasta"
@@ -141,10 +239,10 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/TripType",
-              "description": "auto | one_way | round_trip",
+              "description": "auto (ida y vuelta si hay fechas de vuelta o noches) | one_way | round_trip",
               "default": "auto"
             },
-            "description": "auto | one_way | round_trip"
+            "description": "auto (ida y vuelta si hay fechas de vuelta o noches) | one_way | round_trip"
           },
           {
             "name": "min_price",
@@ -160,8 +258,10 @@
                   "type": "null"
                 }
               ],
+              "description": "Precio total mínimo",
               "title": "Min Price"
-            }
+            },
+            "description": "Precio total mínimo"
           },
           {
             "name": "max_price",
@@ -177,8 +277,13 @@
                   "type": "null"
                 }
               ],
+              "description": "Precio total máximo",
+              "examples": [
+                150
+              ],
               "title": "Max Price"
-            }
+            },
+            "description": "Precio total máximo"
           },
           {
             "name": "min_nights",
@@ -224,9 +329,11 @@
             "required": false,
             "schema": {
               "type": "boolean",
+              "description": "Solo vuelos sin escalas (en cada tramo)",
               "default": false,
               "title": "Direct Only"
-            }
+            },
+            "description": "Solo vuelos sin escalas (en cada tramo)"
           },
           {
             "name": "currency",
@@ -241,8 +348,13 @@
                   "type": "null"
                 }
               ],
+              "description": "Moneda ISO (EUR, USD…). Vacío = DEFAULT_CURRENCY del servidor",
+              "examples": [
+                "EUR"
+              ],
               "title": "Currency"
-            }
+            },
+            "description": "Moneda ISO (EUR, USD…). Vacío = DEFAULT_CURRENCY del servidor"
           },
           {
             "name": "sources",
@@ -560,6 +672,286 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SearchResponse"
+                },
+                "examples": {
+                  "round_trip": {
+                    "summary": "Ruta concreta: BCN ⇄ LIS",
+                    "description": "`/deals?origin=BCN&destination=LIS&depart_from=2027-03-20&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-29&limit=2`",
+                    "value": {
+                      "query": {
+                        "origin": "BCN",
+                        "destination": "LIS",
+                        "depart_from": "2027-03-20",
+                        "depart_to": "2027-03-22",
+                        "return_from": "2027-03-27",
+                        "return_to": "2027-03-29",
+                        "limit": 2,
+                        "sort": "price",
+                        "currency": "EUR"
+                      },
+                      "count": 2,
+                      "sources_used": [
+                        "travelpayouts"
+                      ],
+                      "warnings": [],
+                      "results": [
+                        {
+                          "source": "travelpayouts",
+                          "kind": "round_trip",
+                          "origin": "BCN",
+                          "destination": "LIS",
+                          "destination_name": "Lisboa",
+                          "destination_country": "PT",
+                          "departure_date": "2027-03-22",
+                          "return_date": "2027-03-27",
+                          "nights": 5,
+                          "price": 95.0,
+                          "currency": "EUR",
+                          "airline": "U2",
+                          "flight_number": "U27682",
+                          "stops": 0,
+                          "return_stops": 0,
+                          "duration_minutes": 125,
+                          "link": "https://www.aviasales.com/search/BCN2203LIS27031?t=U2...&expected_price=95"
+                        },
+                        {
+                          "source": "travelpayouts",
+                          "kind": "round_trip",
+                          "origin": "BCN",
+                          "destination": "LIS",
+                          "destination_name": "Lisboa",
+                          "destination_country": "PT",
+                          "departure_date": "2027-03-20",
+                          "return_date": "2027-03-27",
+                          "nights": 7,
+                          "price": 99.0,
+                          "currency": "EUR",
+                          "airline": "FR",
+                          "flight_number": "FR3078",
+                          "stops": 0,
+                          "return_stops": 0,
+                          "duration_minutes": 125,
+                          "link": "https://www.aviasales.com/search/BCN2003LIS27031?t=FR...&expected_price=99"
+                        }
+                      ],
+                      "alternatives": []
+                    }
+                  },
+                  "open_jaw": {
+                    "summary": "Billetes sueltos: ida a Lisboa, vuelta desde Oporto",
+                    "description": "`/deals?origin=BCN&destination=LIS&depart_from=2027-03-20&return_from=2027-03-29&flex_days=2&return_origin=OPO&limit=1`",
+                    "value": {
+                      "query": {
+                        "origin": "BCN",
+                        "destination": "LIS",
+                        "depart_from": "2027-03-20",
+                        "return_from": "2027-03-29",
+                        "flex_days": 2,
+                        "return_origin": "OPO",
+                        "limit": 1
+                      },
+                      "count": 1,
+                      "sources_used": [
+                        "travelpayouts"
+                      ],
+                      "warnings": [],
+                      "results": [
+                        {
+                          "source": "travelpayouts",
+                          "kind": "open_jaw",
+                          "origin": "BCN",
+                          "destination": "LIS",
+                          "destination_name": "Lisboa",
+                          "destination_country": "PT",
+                          "departure_date": "2027-03-20",
+                          "return_date": "2027-03-27",
+                          "nights": 7,
+                          "price": 51.0,
+                          "currency": "EUR",
+                          "airline": "FR",
+                          "stops": 0,
+                          "return_stops": 0,
+                          "depart_shift": 0,
+                          "return_shift": -2,
+                          "savings_vs_exact": 44.0,
+                          "return_origin": "OPO",
+                          "legs": [
+                            {
+                              "source": "travelpayouts",
+                              "origin": "BCN",
+                              "origin_airport": "BCN",
+                              "destination": "LIS",
+                              "destination_airport": "LIS",
+                              "departure_at": "2027-03-20T20:30:00+01:00",
+                              "arrival_at": "2027-03-20T22:35:00+01:00",
+                              "departure_date": "2027-03-20",
+                              "price": 27.0,
+                              "currency": "EUR",
+                              "airline": "FR",
+                              "stops": 0,
+                              "duration_minutes": 125,
+                              "link": "https://www.aviasales.com/search/BCN2003LIS1?t=FR..."
+                            },
+                            {
+                              "source": "travelpayouts",
+                              "origin": "OPO",
+                              "origin_airport": "OPO",
+                              "destination": "BCN",
+                              "destination_airport": "BCN",
+                              "departure_at": "2027-03-27T06:00:00+00:00",
+                              "arrival_at": "2027-03-27T07:55:00+00:00",
+                              "departure_date": "2027-03-27",
+                              "price": 24.0,
+                              "currency": "EUR",
+                              "airline": "FR",
+                              "stops": 0,
+                              "duration_minutes": 115,
+                              "link": "https://www.aviasales.com/search/OPO2703BCN1?t=FR..."
+                            }
+                          ],
+                          "notes": [
+                            "Dos billetes separados: resérvalos por separado con el enlace de cada tramo"
+                          ]
+                        }
+                      ],
+                      "alternatives": []
+                    }
+                  },
+                  "self_transfer": {
+                    "summary": "Modo avanzado: Estocolmo → París → Barcelona",
+                    "description": "`/deals?origin=STO&destination=BCN&depart_from=2027-03-20&mode=advanced&limit=1`",
+                    "value": {
+                      "query": {
+                        "origin": "STO",
+                        "destination": "BCN",
+                        "depart_from": "2027-03-20",
+                        "mode": "advanced",
+                        "limit": 1
+                      },
+                      "count": 1,
+                      "sources_used": [
+                        "travelpayouts"
+                      ],
+                      "warnings": [
+                        "Modo avanzado: las combinaciones self_transfer son dos billetes independientes. Si el primer vuelo se retrasa y pierdes el segundo, no hay protección ni compensación; …"
+                      ],
+                      "results": [
+                        {
+                          "source": "travelpayouts",
+                          "kind": "self_transfer",
+                          "origin": "STO",
+                          "destination": "BCN",
+                          "destination_name": "Barcelona",
+                          "destination_country": "ES",
+                          "departure_date": "2027-03-20",
+                          "price": 103.0,
+                          "currency": "EUR",
+                          "airline": "FR+TO",
+                          "stops": 1,
+                          "duration_minutes": 1265,
+                          "layover_city": "PAR",
+                          "layover_hours": 17.2,
+                          "airport_change": false,
+                          "stopover_type": "overnight",
+                          "legs": [
+                            {
+                              "source": "travelpayouts",
+                              "origin": "STO",
+                              "origin_airport": "ARN",
+                              "destination": "PAR",
+                              "destination_airport": "ORY",
+                              "departure_at": "2027-03-20T06:45:00+01:00",
+                              "arrival_at": "2027-03-20T09:40:00+01:00",
+                              "departure_date": "2027-03-20",
+                              "price": 71.0,
+                              "currency": "EUR",
+                              "airline": "TO",
+                              "stops": 0,
+                              "link": "https://www.aviasales.com/search/STO2003PAR1?t=TO..."
+                            },
+                            {
+                              "source": "travelpayouts",
+                              "origin": "PAR",
+                              "origin_airport": "ORY",
+                              "destination": "BCN",
+                              "destination_airport": "BCN",
+                              "departure_at": "2027-03-21T02:50:00+01:00",
+                              "arrival_at": "2027-03-21T04:50:00+01:00",
+                              "departure_date": "2027-03-21",
+                              "price": 32.0,
+                              "currency": "EUR",
+                              "airline": "FR",
+                              "stops": 0,
+                              "link": "https://www.aviasales.com/search/PAR2103BCN1?t=FR..."
+                            }
+                          ],
+                          "notes": [
+                            "Dos billetes separados: resérvalos por separado con el enlace de cada tramo",
+                            "Conexión por tu cuenta en PAR: 17.2 h",
+                            "1 noche(s) en PAR"
+                          ]
+                        }
+                      ],
+                      "alternatives": []
+                    }
+                  },
+                  "alternatives": {
+                    "summary": "Sin resultados: alternativas cercanas",
+                    "description": "`/deals?origin=BCN&destination=OPO&depart_from=2027-03-20&return_from=2027-03-29&limit=2`",
+                    "value": {
+                      "query": {
+                        "origin": "BCN",
+                        "destination": "OPO",
+                        "depart_from": "2027-03-20",
+                        "return_from": "2027-03-29",
+                        "limit": 2
+                      },
+                      "count": 0,
+                      "sources_used": [
+                        "travelpayouts"
+                      ],
+                      "warnings": [
+                        "Sin resultados con los criterios exactos; 2 alternativas cercanas en `alternatives`"
+                      ],
+                      "results": [],
+                      "alternatives": [
+                        {
+                          "source": "travelpayouts",
+                          "kind": "round_trip",
+                          "origin": "BCN",
+                          "destination": "LIS",
+                          "destination_name": "Lisboa",
+                          "destination_country": "PT",
+                          "departure_date": "2027-03-22",
+                          "return_date": "2027-03-26",
+                          "nights": 4,
+                          "price": 91.0,
+                          "currency": "EUR",
+                          "depart_shift": 2,
+                          "return_shift": -3,
+                          "link": "https://www.aviasales.com/search/...",
+                          "alternative": "destino cercano: LIS a 274 km de OPO"
+                        },
+                        {
+                          "source": "travelpayouts",
+                          "kind": "round_trip",
+                          "origin": "BCN",
+                          "destination": "OPO",
+                          "destination_name": "Oporto",
+                          "destination_country": "PT",
+                          "departure_date": "2027-03-20",
+                          "return_date": "2027-03-26",
+                          "nights": 6,
+                          "price": 116.0,
+                          "currency": "EUR",
+                          "depart_shift": 0,
+                          "return_shift": -3,
+                          "link": "https://www.aviasales.com/search/...",
+                          "alternative": "fechas cercanas (±7 días)"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             }
@@ -599,8 +991,11 @@
     },
     "/calendar": {
       "get": {
-        "summary": "Calendar",
-        "description": "Precio más barato por día de ida (y de vuelta). Acepta los mismos parámetros que /deals;\n`limit`, `sort` y `group_by_destination` no se usan. Requiere fechas de ida.",
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Calendario de precios por día",
+        "description": "Devuelve un **mapa de precios por día**: para cada fecha de ida (y de vuelta, si es ida y vuelta)\nel precio **más barato** encontrado, con su nivel (`low` / `mid` / `high`, por tercios) para pintarlo\ncomo mapa de calor. Incluye `stats` (mínimo, máximo, media) y `cheapest` (la mejor celda).\n\n**Úsalo para** elegir fechas cuando el destino ya está decidido o para ver cómo varía el precio.\n\n**Diferencias con `/deals`:**\n- Acepta los mismos parámetros y hace la misma búsqueda (incluidos `flex_days`, `split_tickets`,\n  `open_jaw` y `mode=advanced`), pero devuelve **una sola celda por fecha** (o par de fechas).\n- **Necesita fechas de ida** (`depart_from` y/o `depart_to`), si no responde `422`.\n- No usa `limit`, `sort` ni `group_by_destination`, y no propone `alternatives`.\n- `grid` da la misma información compacta: `{ida: precio}` en solo ida o `{ida: {vuelta: precio}}`\n  en ida y vuelta.\n\n### Llamadas de ejemplo\n| Qué busca | Llamada |\n|---|---|\n| Ida y vuelta BCN ⇄ LIS, qué combinación de días sale mejor | `/calendar?origin=BCN&destination=LIS&depart_from=2027-03-20&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-28` |\n| Solo ida a Londres durante un mes | `/calendar?origin=MAD&destination=LON&depart_from=2027-02-01&depart_to=2027-02-28&trip_type=one_way` |\n| Cualquier destino: el más barato de cada día | `/calendar?origin=BCN&depart_from=2027-03-01&depart_to=2027-03-15&trip_type=one_way` |",
         "operationId": "calendar_calendar_get",
         "parameters": [
           {
@@ -610,6 +1005,9 @@
             "schema": {
               "type": "string",
               "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD",
+              "examples": [
+                "BCN"
+              ],
               "title": "Origin"
             },
             "description": "IATA de salida (ciudad o aeropuerto), p. ej. MAD"
@@ -628,6 +1026,9 @@
                 }
               ],
               "description": "IATA de destino. Vacío = cualquier destino",
+              "examples": [
+                "LIS"
+              ],
               "title": "Destination"
             },
             "description": "IATA de destino. Vacío = cualquier destino"
@@ -647,6 +1048,9 @@
                 }
               ],
               "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto",
+              "examples": [
+                "2027-03-20"
+              ],
               "title": "Depart From"
             },
             "description": "Ida desde (YYYY-MM-DD). Solo esta = día exacto"
@@ -666,6 +1070,9 @@
                 }
               ],
               "description": "Ida hasta (YYYY-MM-DD)",
+              "examples": [
+                "2027-03-22"
+              ],
               "title": "Depart To"
             },
             "description": "Ida hasta (YYYY-MM-DD)"
@@ -685,6 +1092,9 @@
                 }
               ],
               "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta",
+              "examples": [
+                "2027-03-27"
+              ],
               "title": "Return From"
             },
             "description": "Vuelta desde. Si hay vuelta, se busca ida y vuelta"
@@ -704,6 +1114,9 @@
                 }
               ],
               "description": "Vuelta hasta",
+              "examples": [
+                "2027-03-29"
+              ],
               "title": "Return To"
             },
             "description": "Vuelta hasta"
@@ -714,10 +1127,10 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/TripType",
-              "description": "auto | one_way | round_trip",
+              "description": "auto (ida y vuelta si hay fechas de vuelta o noches) | one_way | round_trip",
               "default": "auto"
             },
-            "description": "auto | one_way | round_trip"
+            "description": "auto (ida y vuelta si hay fechas de vuelta o noches) | one_way | round_trip"
           },
           {
             "name": "min_price",
@@ -733,8 +1146,10 @@
                   "type": "null"
                 }
               ],
+              "description": "Precio total mínimo",
               "title": "Min Price"
-            }
+            },
+            "description": "Precio total mínimo"
           },
           {
             "name": "max_price",
@@ -750,8 +1165,13 @@
                   "type": "null"
                 }
               ],
+              "description": "Precio total máximo",
+              "examples": [
+                150
+              ],
               "title": "Max Price"
-            }
+            },
+            "description": "Precio total máximo"
           },
           {
             "name": "min_nights",
@@ -797,9 +1217,11 @@
             "required": false,
             "schema": {
               "type": "boolean",
+              "description": "Solo vuelos sin escalas (en cada tramo)",
               "default": false,
               "title": "Direct Only"
-            }
+            },
+            "description": "Solo vuelos sin escalas (en cada tramo)"
           },
           {
             "name": "currency",
@@ -814,8 +1236,13 @@
                   "type": "null"
                 }
               ],
+              "description": "Moneda ISO (EUR, USD…). Vacío = DEFAULT_CURRENCY del servidor",
+              "examples": [
+                "EUR"
+              ],
               "title": "Currency"
-            }
+            },
+            "description": "Moneda ISO (EUR, USD…). Vacío = DEFAULT_CURRENCY del servidor"
           },
           {
             "name": "sources",
@@ -1133,6 +1560,173 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CalendarResponse"
+                },
+                "examples": {
+                  "round_trip": {
+                    "summary": "Ida y vuelta BCN ⇄ LIS",
+                    "description": "`/calendar?origin=BCN&destination=LIS&depart_from=2027-03-20&depart_to=2027-03-22&return_from=2027-03-27&return_to=2027-03-28`",
+                    "value": {
+                      "query": {
+                        "origin": "BCN",
+                        "destination": "LIS",
+                        "depart_from": "2027-03-20",
+                        "depart_to": "2027-03-22",
+                        "return_from": "2027-03-27",
+                        "return_to": "2027-03-28"
+                      },
+                      "trip": "round_trip",
+                      "currency": "EUR",
+                      "sources_used": [
+                        "travelpayouts"
+                      ],
+                      "warnings": [],
+                      "stats": {
+                        "cells": 3,
+                        "min": 95.0,
+                        "max": 116.0,
+                        "avg": 103.33
+                      },
+                      "cheapest": {
+                        "departure_date": "2027-03-22",
+                        "return_date": "2027-03-27",
+                        "nights": 5,
+                        "price": 95.0,
+                        "price_level": "low",
+                        "airline": "U2",
+                        "destination": "LIS",
+                        "destination_name": "Lisboa",
+                        "kind": "round_trip",
+                        "stops": 0,
+                        "link": "https://www.aviasales.com/search/BCN2203LIS27031?t=U2...&expected_price=95"
+                      },
+                      "cells": [
+                        {
+                          "departure_date": "2027-03-20",
+                          "return_date": "2027-03-27",
+                          "nights": 7,
+                          "price": 99.0,
+                          "price_level": "mid",
+                          "airline": "FR",
+                          "destination": "LIS",
+                          "destination_name": "Lisboa",
+                          "kind": "round_trip",
+                          "stops": 0,
+                          "link": "https://www.aviasales.com/search/BCN2003LIS27031?t=FR..."
+                        },
+                        {
+                          "departure_date": "2027-03-22",
+                          "return_date": "2027-03-27",
+                          "nights": 5,
+                          "price": 95.0,
+                          "price_level": "low",
+                          "airline": "U2",
+                          "destination": "LIS",
+                          "destination_name": "Lisboa",
+                          "kind": "round_trip",
+                          "stops": 0,
+                          "link": "https://www.aviasales.com/search/BCN2203LIS27031?t=U2...&expected_price=95"
+                        },
+                        {
+                          "departure_date": "2027-03-22",
+                          "return_date": "2027-03-28",
+                          "nights": 6,
+                          "price": 116.0,
+                          "price_level": "high",
+                          "airline": "TP",
+                          "destination": "LIS",
+                          "destination_name": "Lisboa",
+                          "kind": "round_trip",
+                          "stops": 0,
+                          "link": "https://www.aviasales.com/search/BCN2203LIS28031?t=TP..."
+                        }
+                      ],
+                      "grid": {
+                        "2027-03-20": {
+                          "2027-03-27": 99.0
+                        },
+                        "2027-03-22": {
+                          "2027-03-27": 95.0,
+                          "2027-03-28": 116.0
+                        }
+                      }
+                    }
+                  },
+                  "one_way": {
+                    "summary": "Solo ida: grid de fecha → precio (valores ilustrativos)",
+                    "description": "`/calendar?origin=MAD&destination=BCN&depart_from=2027-02-01&depart_to=2027-02-03&trip_type=one_way`",
+                    "value": {
+                      "query": {
+                        "origin": "MAD",
+                        "destination": "BCN",
+                        "depart_from": "2027-02-01",
+                        "depart_to": "2027-02-03",
+                        "trip_type": "one_way"
+                      },
+                      "trip": "one_way",
+                      "currency": "EUR",
+                      "sources_used": [
+                        "travelpayouts"
+                      ],
+                      "warnings": [],
+                      "stats": {
+                        "cells": 3,
+                        "min": 19.0,
+                        "max": 42.0,
+                        "avg": 29.0
+                      },
+                      "cheapest": {
+                        "departure_date": "2027-02-02",
+                        "price": 19.0,
+                        "price_level": "low",
+                        "destination": "BCN",
+                        "destination_name": "Barcelona",
+                        "kind": "one_way",
+                        "airline": "VY",
+                        "stops": 0,
+                        "link": "https://www.aviasales.com/search/MAD0202BCN1?t=VY..."
+                      },
+                      "cells": [
+                        {
+                          "departure_date": "2027-02-01",
+                          "price": 26.0,
+                          "price_level": "mid",
+                          "destination": "BCN",
+                          "destination_name": "Barcelona",
+                          "kind": "one_way",
+                          "airline": "VY",
+                          "stops": 0,
+                          "link": "https://www.aviasales.com/search/MAD0102BCN1?t=VY..."
+                        },
+                        {
+                          "departure_date": "2027-02-02",
+                          "price": 19.0,
+                          "price_level": "low",
+                          "destination": "BCN",
+                          "destination_name": "Barcelona",
+                          "kind": "one_way",
+                          "airline": "VY",
+                          "stops": 0,
+                          "link": "https://www.aviasales.com/search/MAD0202BCN1?t=VY..."
+                        },
+                        {
+                          "departure_date": "2027-02-03",
+                          "price": 42.0,
+                          "price_level": "high",
+                          "destination": "BCN",
+                          "destination_name": "Barcelona",
+                          "kind": "one_way",
+                          "airline": "VY",
+                          "stops": 0,
+                          "link": "https://www.aviasales.com/search/MAD0302BCN1?t=VY..."
+                        }
+                      ],
+                      "grid": {
+                        "2027-02-01": 26.0,
+                        "2027-02-02": 19.0,
+                        "2027-02-03": 42.0
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2071,5 +2665,15 @@
         "description": "422: parámetros no válidos."
       }
     }
-  }
+  },
+  "tags": [
+    {
+      "name": "Ofertas",
+      "description": "Búsqueda de vuelos: lista de ofertas o calendario de precios"
+    },
+    {
+      "name": "Información",
+      "description": "Descripción de la API y estado del servicio"
+    }
+  ]
 }
