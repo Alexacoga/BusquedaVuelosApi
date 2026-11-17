@@ -10,7 +10,7 @@ import asyncio
 from datetime import date
 
 from app.config import Settings
-from app.models import Deal, SearchParams
+from app.models import Deal, DealKind, SearchParams
 from app.providers.base import Provider, ProviderError, parse_date
 
 URL = "https://serpapi.com/search.json"
@@ -25,7 +25,7 @@ def _months_ahead(month_str: str, today: date) -> int:
 def _travel_duration(params: SearchParams) -> int:
     """1 = fin de semana, 2 = una semana, 3 = dos semanas."""
     nights = params.max_nights or params.min_nights
-    dw, rw = params.depart_window, params.return_window
+    dw, rw = params.depart_search_window, params.return_search_window
     if nights is None and dw and rw:
         mid_dep = dw.start + (dw.end - dw.start) / 2
         mid_ret = rw.start + (rw.end - rw.start) / 2
@@ -65,7 +65,7 @@ class SerpApiProvider(Provider):
         if params.max_price is not None:
             base["max_price"] = int(params.max_price)
 
-        dw, rw = params.depart_window, params.return_window
+        dw, rw = params.depart_search_window, params.return_search_window
         exact = dw and dw.is_single_day and (not params.is_round_trip or (rw and rw.is_single_day))
         if exact:
             q = dict(base, outbound_date=dw.start.isoformat())
@@ -114,6 +114,7 @@ class SerpApiProvider(Provider):
         airline_code = item.get("airline_code")
         return Deal(
             source=self.name,
+            kind=DealKind.round_trip if ret else DealKind.one_way,
             origin=params.origin,
             destination=airport.get("code") or params.destination or "?",
             destination_name=item.get("name"),

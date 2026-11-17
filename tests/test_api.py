@@ -265,3 +265,123 @@ def test_travelpayouts_too_many_combinations():
     from app.providers import ProviderError
     with pytest.raises(ProviderError):
         asyncio.run(p.search(params))
+
+
+# --- Fase 1: búsqueda ampliada (fechas flexibles, orden, billetes sueltos, open-jaw) --------
+
+def tp_client(handler):
+    s = replace(get_settings(), travelpayouts_token="tok", serpapi_api_key=None)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    app.state.service = FlightDealsService([TravelpayoutsProvider(client, TTLCache(0), s),
+                                            SerpApiProvider(client, TTLCache(0), s)])
+    return TestClient(app)
+
+
+def test_flex_days_shift_and_savings(rec):
+    with tp_client(rec) as c:
+        r = c.get("/deals", params={"origin": "MAD", "destination": "BCN", "depart_from": D(11),
+                                    "return_from": D(15), "flex_days": 1})
+    app.state.service = None
+    res = r.json()["results"]
+    assert [d["price"] for d in res] == [35, 80]
+    flex, exact = res
+    assert (flex["depart_shift"], flex["return_shift"]) == (-1, -1) and flex["savings_vs_exact"] == 45
+    assert (exact["depart_shift"], exact["return_shift"]) == (0, 0)
+
+
+def test_max_shift_total_and_sorting(rec):
+    base = {"origin": "MAD", "destination": "BCN", "depart_from": D(11), "return_from": D(15), "flex_days": 1}
+    with tp_client(rec) as c:
+        assert [d["price"] for d in c.get("/deals", params=base | {"max_shift_total": 1}).json()["results"]] == [80]
+        assert c.get("/deals", params=base | {"sort": "closest"}).json()["results"][0]["price"] == 80
+        assert c.get("/deals", params=base | {"sort": "score", "shift_penalty": 30}).json()["results"][0]["price"] == 80
+        assert c.get("/deals", params=base | {"sort": "score", "shift_penalty": 10}).json()["results"][0]["price"] == 35
+    app.state.service = None
+
+
+def test_flex_requires_dates(client):
+    assert client.get("/deals", params={"origin": "MAD", "flex_days": 2}).status_code == 422
+    assert client.get("/deals", params={"origin": "MAD", "depart_from": D(5), "return_flex": 2}).status_code == 422
+    assert client.get("/deals", params={"origin": "MAD", "depart_from": D(5), "open_jaw": True}).status_code == 422
+
+
+# Billetes de solo ida simulados: (origen, destino, día, hora, precio, duración min, escalas)
+ONE_WAYS = [
+    ("MAD", "LIS", 12, 8, 20, 60, 0),
+    ("MAD", "LIS", 13, 9, 50, 60, 0),
+    ("LIS", "MAD", 19, 18, 25, 60, 0),
+    ("OPO", "MAD", 18, 10, 15, 70, 0),
+    ("LIS", "MAD", 12, 7, 5, 60, 0),     # sale antes de llegar la ida: nunca debe combinarse
+    ("MAD", "ROM", 20, 7, 30, 150, 0),
+    ("ROM", "MAD", 25, 20, 30, 150, 0),
+]
+def _city(code, name, country, lat, lon):
+    return {"code": code, "name": name, "country_code": country, "coordinates": {"lat": lat, "lon": lon}}
+
+
+CITIES = [_city("LIS", "Lisboa", "PT", 38.72, -9.14), _city("OPO", "Oporto", "PT", 41.15, -8.61),
+          _city("ROM", "Roma", "IT", 41.89, 12.49), _city("BCN", "Barcelona", "ES", 41.39, 2.17),
+          _city("MAD", "Madrid", "ES", 40.42, -3.70)]
+
+
+def legs_handler(rec):
+    def handler(request: httpx.Request):
+        url = str(request.url)
+        if "cities.json" in url:
+            return httpx.Response(200, json=CITIES)
+        if "prices_for_dates" in url and request.url.params.get("one_way") == "true":
+            o, d = request.url.params.get("origin"), request.url.params.get("destination")
+            data = [{"origin": a, "destination": b, "origin_airport": a, "destination_airport": b,
+                     "price": p, "airline": "VY", "flight_number": 100 + i, "transfers": s,
+                     "departure_at": f"{D(day)}T{hour:02d}:00:00+01:00", "duration_to": dur,
+                     "link": f"/search/{a}{b}?t={i}"}
+                    for i, (a, b, day, hour, p, dur, s) in enumerate(ONE_WAYS)
+                    if (not o or a == o) and (not d or b == d)]
+            return httpx.Response(200, json={"success": True, "data": data, "currency": "eur"})
+        return rec(request)
+    return handler
+
+
+def test_split_tickets_beat_round_trip(rec):
+    with tp_client(legs_handler(rec)) as c:
+        r = c.get("/deals", params={"origin": "MAD", "destination": "LIS", "depart_from": D(11),
+                                    "depart_to": D(13), "return_from": D(18), "return_to": D(20),
+                                    "split_tickets": True})
+    app.state.service = None
+    res = r.json()["results"]
+    best = res[0]
+    assert best["kind"] == "split" and best["price"] == 45 and len(best["legs"]) == 2
+    assert best["legs"][0]["link"].startswith("https://www.aviasales.com/search/MADLIS")
+    assert best["savings_vs_exact"] == 15                     # ida y vuelta normal a LIS: 60
+    assert all(d["kind"] != "split" or d["price"] != 25 for d in res)  # vuelta de 5 € anterior a la ida descartada
+
+
+def test_open_jaw_with_return_origin(rec):
+    with tp_client(legs_handler(rec)) as c:
+        r = c.get("/deals", params={"origin": "MAD", "destination": "LIS", "depart_from": D(12),
+                                    "return_from": D(17), "return_to": D(19), "return_origin": "OPO"})
+    app.state.service = None
+    res = r.json()["results"]
+    assert res and all(d["kind"] == "open_jaw" and d["return_origin"] == "OPO" for d in res)
+    assert res[0]["price"] == 35 and res[0]["legs"][1]["origin"] == "OPO"
+
+
+def test_open_jaw_same_country_auto(rec):
+    with tp_client(legs_handler(rec)) as c:
+        r = c.get("/deals", params={"origin": "MAD", "depart_from": D(11), "depart_to": D(21),
+                                    "return_from": D(17), "return_to": D(26), "open_jaw": True})
+    app.state.service = None
+    res = r.json()["results"]
+    pairs = {(d["destination"], d["return_origin"]) for d in res}
+    assert ("LIS", "OPO") in pairs and all(a != b for a, b in pairs)   # Lisboa-Oporto ≈ 275 km
+    assert not any(d["destination"] == "ROM" for d in res)   # no hay ciudad a < 600 km de Roma con vuelta
+
+
+def test_open_jaw_max_km(rec):
+    with tp_client(legs_handler(rec)) as c:
+        r = c.get("/deals", params={"origin": "MAD", "destination": "LIS", "depart_from": D(12),
+                                    "return_from": D(17), "return_to": D(19), "open_jaw": True,
+                                    "open_jaw_max_km": 100})
+    app.state.service = None
+    body = r.json()
+    assert body["count"] == 0 and "100 km" in body["warnings"][0]

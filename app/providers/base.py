@@ -27,6 +27,8 @@ class ProviderQueryError(ProviderError):
 
 class Provider(ABC):
     name: str = "base"
+    # True si implementa one_way_legs() (necesario para billetes sueltos y modo avanzado)
+    supports_one_way_legs: bool = False
 
     def __init__(self, client: httpx.AsyncClient, cache: TTLCache):
         self.client = client
@@ -78,6 +80,17 @@ def _error_text(resp: httpx.Response) -> str:
     except ValueError:
         pass
     return resp.text[:200]
+
+
+def parse_datetime(value: str | None) -> datetime | None:
+    """Fecha-hora ISO con zona (p. ej. 2027-03-20T06:00:00+01:00). Sin zona → None-aware no se compara."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else None
 
 
 def parse_date(value: str | None) -> date | None:
